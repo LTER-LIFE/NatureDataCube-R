@@ -1,6 +1,6 @@
-#' Compose _NatureDataCube_ URL
+#' Compose _NatureDataCube_/_AgroDataCube_ URL
 #'
-#' Compose URL text string to submit requests through _NatureDataCube_ REST API.
+#' Compose URL text string to submit requests through _NatureDataCube_/_AgroDataCube_ REST APIs.
 #'
 #' @param option character. Determines the type of request.
 #' @param params vector or list. List of named parameters.
@@ -31,8 +31,7 @@ ndc_url <- function(option, params) {
                     "KPI_Croprotation"  = "datapackage/kpi/croprotation")
 
   # Add parameters
-  params_nona <- na.omit(params)
-  params_nona <- lapply(params_nona, FUN = function(x) URLencode(x, repeated = TRUE))
+  params_nona <- lapply(na.omit(params), FUN = function(x) URLencode(x, repeated = TRUE))
   params_url <- paste(names(params_nona), params_nona, sep = "=", collapse = "&")
   url <- paste0(base_url, data_options[option], "?", params_url)
   

@@ -1,6 +1,6 @@
-#' Get data from _NatureDataCube_
+#' Get data from _NatureDataCube_/_AgroDataCube_
 #'
-#' Wrapper to get data from _NatureDataCube_ through it's REST API.
+#' Wrapper to get data from _NatureDataCube_/_AgroDataCube_ through their REST API.
 #'
 #' @import httr
 #' @param url character. Request URL.
