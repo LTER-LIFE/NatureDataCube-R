@@ -14,8 +14,7 @@ ndc_url <- function(option, params) {
   data_options <- c("Fields"            = "fields",
                     "AHN"               = "ahn",
                     "AHN_image"         = "ahn_image",
-                    "Meteo"             = "meteostations",
-                    "Meteo_station"     = "meteostations/XXX",
+                    "Meteo_stations"    = "meteostations",
                     "Meteo_data"        = "meteodata",
                     "Soilparams"        = "soilparams",
                     "Soiltypes"         = "soiltypes",
@@ -32,8 +31,15 @@ ndc_url <- function(option, params) {
 
   # Add parameters
   params_nona <- lapply(na.omit(params), FUN = function(x) URLencode(x, repeated = TRUE))
+  if ((option == "Meteo_stations") && ("meteostation" %in% names(params))) {
+    params_ms <- params_nona["meteostation"]
+    params_nona <- params_nona[-which(names(params_nona) == "meteostation")]
+    ms_url <- paste0("/", as.character(params_ms))
+  } else {
+    ms_url <- ""
+  }
   params_url <- paste(names(params_nona), params_nona, sep = "=", collapse = "&")
-  url <- paste0(base_url, data_options[option], "?", params_url)
+  url <- paste0(base_url, data_options[option], ms_url, "?", params_url)
   
   return(url)
 }

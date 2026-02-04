@@ -26,16 +26,3 @@ gm_get <- function(url, option = "NDVI", params,
 
   return(response)
 }
-
-# Example
-# curl -L -o Nestkast_Bennekom_ndvi_20251225.tif "https://data.groenmonitor.nl/geoserver/wcs?service=WCS&version=2.0.1&request=GetCoverage&coverageId=groenmonitor__ndvi_20251225&subset=E(684613,685907)&subset=N(5763913,5764822)&format=image/tiff"
-# 
-# myurl <- gm_url(option = "NDVI",
-#                 params = c(date = "20251225",
-#                            xmin = 684613,
-#                            xmax = 685907,
-#                            ymin = 5763913,
-#                            ymax = 5764822,
-#                            format = "tiff"))
-# gm_get(url = myurl,
-#        out_path = "Nestkast_Bennekom_ndvi_20251225.tif")
