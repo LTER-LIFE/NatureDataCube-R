@@ -21,7 +21,7 @@ gm_url <- function(option = "NDVI", params) {
                       paste0("subset=N(", p$ymin, ",", p$ymax, ")"),
                       paste0("format=image/", tolower(p$format)),
                       sep = "&")
-  url <- paste0(base_url, params_url)
+  url <- paste0(base_url, "&", params_url)
   
   return(url)
 }

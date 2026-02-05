@@ -8,11 +8,11 @@ _NatureDataCube_ is a platform based on [_AgroDataCube_](https://agrodatacube.wu
 
 ### Through _NatureDataCube_/_AgroDataCube_ REST API
 
-- [X] [`ndc_url`](`R/ndc_url.R`): Compose URL text string for submitting data requests through the REST API (Note: for the moment, it works with almost all tests (based on examples from _AgroDataCube_'s documentation) in the [examples notebook](`tests/examples.ipynb`));
+- [X] [`ndc_url`](`R/ndc_url.R`): Compose URL text string for submitting data requests through the REST API;
 
-- [X] [`ndc_get`](`R/ndc_get.R`): Submit requests via REST API (Note: for the moment, it works with almost all tests ();
+- [X] [`ndc_get`](`R/ndc_get.R`): Submit requests via REST API;
 
-- [X] Tests based on examples from _AgroDataCube_'s documentation) in the [examples notebook](`tests/examples.ipynb`).
+- [X] Tests based on examples from _AgroDataCube_'s documentation in the [examples notebook](`tests/examples.ipynb`).
 
 ### Through _GroenMonitor_ WCS GeoServer
 
