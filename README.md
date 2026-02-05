@@ -18,7 +18,7 @@ _NatureDataCube_ is a platform based on [_AgroDataCube_](https://agrodatacube.wu
 
 - [X] [`gm_url`](`R/gm_url.R`): Compose URL text string for submitting data requests through the _GroenMonitor_ WCS GeoServer;
 
-- [X] [`gm_get`](`R/gm_get.R`): Submit requests to the _GoenMonitor_ WCS GeoServer.
+- [X] [`gm_get`](`R/gm_get.R`): Submit requests to the _GroenMonitor_ WCS GeoServer.
 
 ## In progress
 
