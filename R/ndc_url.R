@@ -4,14 +4,14 @@
 #'
 #' @param option character. Determines the type of request.
 #' @param params vector or list. List of named parameters.
-#' @returns A request URL text string.
+#' @param base_url character. Base URL for the REST API.
 #' @export
 
-ndc_url <- function(option, params) {
+ndc_url <- function(option, params, base_url = "https://agrodatacube.wur.nl/api/v2/rest/") {
 
-  # Create the base URL
-  base_url <- "https://agrodatacube.wur.nl/api/v2/rest/"
-  data_options <- c("Fields"            = "fields",
+  # Map options
+  data_options <- c("Health_check"      = "lifeprobe",
+                    "Fields"            = "fields",
                     "AHN"               = "ahn",
                     "AHN_image"         = "ahn_image",
                     "Meteo_stations"    = "meteostations",
@@ -29,17 +29,26 @@ ndc_url <- function(option, params) {
                     "KPI_Greenness"     = "datapackage/kpi/greenness",
                     "KPI_Croprotation"  = "datapackage/kpi/croprotation")
 
-  # Add parameters
-  params_nona <- lapply(na.omit(params), FUN = function(x) URLencode(x, repeated = TRUE))
-  if ((option == "Meteo_stations") && ("meteostation" %in% names(params))) {
-    params_ms <- params_nona["meteostation"]
-    params_nona <- params_nona[-which(names(params_nona) == "meteostation")]
-    ms_url <- paste0("/", as.character(params_ms))
+  # Format parameters
+  if (!missing(params)) {
+    params_nona <- lapply(na.omit(params),
+                          FUN = function(x) URLencode(x, repeated = TRUE))
+    if ((option == "Meteo_stations") && ("meteostation" %in% names(params_nona))) {
+      params_ms <- params_nona["meteostation"]
+      params_nona <- params_nona[-which(names(params_nona) == "meteostation")]
+      ms_url <- paste0("/", as.character(params_ms))
+    } else {
+      ms_url <- ""
+    }
+    params_url <- paste(names(params_nona), params_nona, sep = "=", collapse = "&")
   } else {
-    ms_url <- ""
+    params_url <- ""
   }
-  params_url <- paste(names(params_nona), params_nona, sep = "=", collapse = "&")
-  url <- paste0(base_url, data_options[option], ms_url, "?", params_url)
   
+  # Compose URL
+  url <- paste0(base_url, data_options[option])
+  if (option != "Health_check") {
+    url <- paste0(url, ms_url, "?", params_url)
+  }
   return(url)
 }
