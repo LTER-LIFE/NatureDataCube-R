@@ -11,8 +11,7 @@
 
 library(httr)
 
-gm_get <- function(url, option = "NDVI", params,
-                   out_path = paste(getwd(), tmpfile(), sep = "/")) {
+gm_get <- function(url, option = "NDVI", params, out_path = tempfile()) {
 
   # Compose request URL
   if (missing(url) && !missing(option) && !missing(params)) {

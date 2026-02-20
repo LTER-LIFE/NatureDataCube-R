@@ -8,12 +8,14 @@
 #' @param params vector or list. List of named parameters.
 #' @param token character. API token.
 #' @param server character. Server to connect to, either _NatureDataCube_ or _AgroDataCube_.
+#' @param download boolean. If `TRUE`, download file.
 #' @returns A request response list.
 #' @export
 
 library(httr)
 
-ndc_get <- function(url, option, params, token, server = "adct") {
+ndc_get <- function(url, option, params, token, server = "adct",
+                    download = FALSE, out_path = tempfile()) {
 
   # Servers
   server_code <- tolower(server)
@@ -37,7 +39,11 @@ ndc_get <- function(url, option, params, token, server = "adct") {
                        "token"  = token)
 
   # Submit request
-  response <- content(VERB("GET", url = request_url, add_headers(request_headers)))
-  
+  if (download) {
+      response <- content(VERB("GET", url = request_url, add_headers(request_headers),
+                               write_disk(out_path, overwrite = TRUE)))
+  } else {
+      response <- content(VERB("GET", url = request_url, add_headers(request_headers)))
+  }
   return(response)
 }

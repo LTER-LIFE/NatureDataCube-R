@@ -29,10 +29,22 @@ ndc_url <- function(option, params, base_url = "https://agrodatacube.wur.nl/api/
                     "KPI_Greenness"     = "datapackage/kpi/greenness",
                     "KPI_Croprotation"  = "datapackage/kpi/croprotation")
 
+  # Compose root URL
+  if ((option == "NDVI") && ("fieldid" %in% names(params))) {
+    root_url <- paste0(base_url, "fields/", params["fieldid"], "/", data_options[option])
+    params <- params[-which(names(params) == "fieldid")]
+  } else {
+    root_url <- paste0(base_url, data_options[option])
+  }
+  
   # Format parameters
   if (!missing(params)) {
+
+    # Remove NAs
     params_nona <- lapply(na.omit(params),
                           FUN = function(x) URLencode(x, repeated = TRUE))
+
+    # Format parameters for weather data
     if ((option == "Meteo_stations") && ("meteostation" %in% names(params_nona))) {
       params_ms <- params_nona["meteostation"]
       params_nona <- params_nona[-which(names(params_nona) == "meteostation")]
@@ -40,15 +52,21 @@ ndc_url <- function(option, params, base_url = "https://agrodatacube.wur.nl/api/
     } else {
       ms_url <- ""
     }
+    
+    # Generate URL with parameters
     params_url <- paste(names(params_nona), params_nona, sep = "=", collapse = "&")
+  
   } else {
+    
+    # In case no parameters are provided
     params_url <- ""
   }
   
-  # Compose URL
-  url <- paste0(base_url, data_options[option])
-  if (option != "Health_check") {
-    url <- paste0(url, ms_url, "?", params_url)
+  # Compose final URL
+  if (option == "Health_check") {
+    url <- root_url
+  } else {
+    url <- paste0(root_url, ms_url, "?", params_url)
   }
   return(url)
 }
