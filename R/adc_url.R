@@ -1,13 +1,13 @@
-#' Compose _NatureDataCube_/_AgroDataCube_ URL
+#' Compose _AgroDataCube_ URL
 #'
-#' Compose URL text string to submit requests through _NatureDataCube_/_AgroDataCube_ REST APIs.
+#' Compose URL text string to submit requests through _AgroDataCube_ REST APIs.
 #'
 #' @param option character. Determines the type of request.
 #' @param params vector or list. List of named parameters.
 #' @param base_url character. Base URL for the REST API.
 #' @export
 
-ndc_url <- function(option, params, base_url = "https://agrodatacube.wur.nl/api/v2/rest/") {
+adc_url <- function(option, params, base_url = "https://agrodatacube.wur.nl/api/v2/rest/") {
 
   # Map options
   data_options <- c("Health_check"      = "lifeprobe",
