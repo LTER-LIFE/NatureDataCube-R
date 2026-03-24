@@ -6,30 +6,30 @@ _NatureDataCube_ is a platform based on [_AgroDataCube_](https://agrodatacube.wu
 
 ## Implemented functions
 
-### Through _NatureDataCube_/_AgroDataCube_ REST API
+### To access data through the _NatureDataCube_ STAC API
 
-- [X] [`ndc_url`](`R/ndc_url.R`): Compose URL text string for submitting data requests through the REST API;
+- [X] Tests/examples for _NatureDataCube_ are provided in the [`examples_ndc` notebook](`tests/examples_ndc.ipynb`).
 
-- [X] [`ndc_get`](`R/ndc_get.R`): Submit requests via REST API;
+### To access data through the _AgroDataCube_ REST API
 
-- [X] Tests based on examples from _AgroDataCube_'s documentation in the [examples notebook](`tests/examples.ipynb`).
+- [X] [`adc_url`](`R/adc_url.R`): Compose URL text string for submitting data requests through the REST API;
 
-### Through _GroenMonitor_ WCS GeoServer
+- [X] [`adc_get`](`R/adc_get.R`): Submit requests via REST API;
+
+- [X] Tests based on examples from _AgroDataCube_'s documentation are provided in the [`examples_adc` notebook](`tests/examples_adc.ipynb`).
+
+### To access data through the _GroenMonitor_ WCS GeoServer
 
 - [X] [`gm_url`](`R/gm_url.R`): Compose URL text string for submitting data requests through the _GroenMonitor_ WCS GeoServer;
 
-- [X] [`gm_get`](`R/gm_get.R`): Submit requests to the _GroenMonitor_ WCS GeoServer.
+- [X] [`gm_get`](`R/gm_get.R`): Submit requests to the _GroenMonitor_ WCS GeoServer;
 
-## In progress
+- [X] Tests/examples for _GroenMonitor_ are provided in the [`examples_gm` notebook](`tests/examples_gm.ipynb`).
 
-- [ ] Verify and format input parameters for submitting valid data requests (e.g. by generating WKT from a custom shapefile or extent in simple text or R spatial object from packages such as `sf` or `terra`).
+## ToDo
 
-- [ ] Format request responses to different types of R objects (e.g. tables in `data.frame` or `dplyr::tibble` formats, spatial object from packages such as `sf` or `terra`)
+- [ ] Implement wrappers for the _NatureDataCube_ STAC-based interface, through packages such as `rstac`, `stacr`.
 
-- [ ] Export outputs to appropriate file formats (e.g. CSV, ESRI Shapefile, GeoTIFF, COG, ZARR)
+- [ ] Connect package functionality to the [Shiny App GUI](https://github.com/LTER-LIFE/NatureDataCube-Shiny);
 
-- [ ] Connect package functionality to the [Shiny App GUI](https://github.com/LTER-LIFE/NatureDataCube-Shiny) (see [demo for NAEM 2026](https://github.com/LTER-LIFE/NatureDataCube-Shiny-NAEM)).
-
-## Future work
-
-- [ ] Functions to access data through STAC.
+- [ ] Harmonize functionality across the different data sources, ando also towards using the returned data within Digital Twins platforms (e.g. _NaaVRE_)
