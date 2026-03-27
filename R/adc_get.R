@@ -9,13 +9,15 @@
 #' @param token character. API token.
 #' @param server character. Server to connect to, either the main or test _AgroDataCube_ server.
 #' @param download boolean. If `TRUE`, download file.
+#' @param out_path character. Output path.
+#' @param overwrite boolean. If `TRUE`, overwrite file.
 #' @returns A request response list.
 #' @export
 
 library(httr)
 
-adc_get <- function(url, option, params, token, server = "adct",
-                    download = FALSE, out_path = tempfile()) {
+adc_get <- function(url, option, params, token, server = "adc",
+                    download = FALSE, out_path = tempfile(), overwrite = TRUE) {
 
   # Servers
   server_code <- tolower(server)
@@ -39,7 +41,7 @@ adc_get <- function(url, option, params, token, server = "adct",
   # Submit request
   if (download) {
       response <- content(VERB("GET", url = request_url, add_headers(request_headers),
-                               write_disk(out_path, overwrite = TRUE)))
+                               write_disk(out_path, overwrite = overwrite)))
   } else {
       response <- content(VERB("GET", url = request_url, add_headers(request_headers)))
   }

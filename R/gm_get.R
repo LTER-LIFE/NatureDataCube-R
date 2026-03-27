@@ -6,12 +6,14 @@
 #' @param url character. Request URL.
 #' @param option character. Determines the type of request.
 #' @param params vector or list. List of named parameters.
+#' @param out_path character. Output path.
+#' @param overwrite boolean. If `TRUE`, overwrite file.
 #' @returns A request response list.
 #' @export
 
 library(httr)
 
-gm_get <- function(url, option = "NDVI", params, out_path = tempfile()) {
+gm_get <- function(url, option = "NDVI", params, out_path = tempfile(), overwrite = TRUE) {
 
   # Compose request URL
   if (missing(url) && !missing(option) && !missing(params)) {
@@ -21,7 +23,7 @@ gm_get <- function(url, option = "NDVI", params, out_path = tempfile()) {
   }
 
   # Download file
-  response <- GET(request_url, write_disk(out_path, overwrite = TRUE))
+  response <- GET(request_url, write_disk(out_path, overwrite = overwrite))
 
   return(response)
 }
