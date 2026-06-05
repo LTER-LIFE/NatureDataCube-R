@@ -1,6 +1,6 @@
 #' Count datasets within spatiotemporal contraints
 #'
-#' Get a list of available datasets (optionally constrained by query parameters) in NatureDataCube.
+#' Obtain a number of items available in NatureDataCube datasets (optionally constrained by query parameters).
 #'
 #' @import rstac
 #' @import httr
