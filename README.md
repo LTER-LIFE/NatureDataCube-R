@@ -8,7 +8,7 @@ _NatureDataCube_ is a platform based on [_AgroDataCube_](https://agrodatacube.wu
 
 ## Main R functions
 
-### Via the _NatureDataCube_ STAC API (see [`examples_ndc.ipynb`](`tests/examples_ndc.ipynb`) and [`examples_stac`](`tests/examples_stac.ipynb`))
+### Via the _NatureDataCube_ STAC API (see [`examples_ndc.ipynb`](`tests/examples_ndc.ipynb`) and [`examples_stac.ipynb`](`tests/examples_stac.ipynb`))
 
 - [`ndc_datasets`](`R/ndc_datasets.R`): List all datasets (optionally constrained by query parameters) in NatureDataCube.
 - [`ndc_search`](`R/ndc_search.R`): Return results from a custom STAC query (optionally fetching the resulting STAC Items)
@@ -85,6 +85,7 @@ The app will be available at `http://localhost:3838/naturedatacube`.
 
 The user can open a Shiny interface which lets them select an area (management area, research site or they cand draw their own area of interest) to retrieve data for. Below is a description of all the files that are in this repository.
 
+```markdown
 NatureDataCube-R/
 │
 ├─ R/
@@ -96,3 +97,4 @@ NatureDataCube-R/
 └─ data/
    │
    └─ [data](https://github.com/LTER-LIFE/NatureDataCube-Shiny/tree/main/data): This folder contains the data of the available study areas. 
+```
