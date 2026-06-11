@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # History files
 .Rhistory
 .Rapp.history
@@ -50,3 +51,10 @@ rsconnect/
 
 # Data folder
 data/
+=======
+.env
+.Rhistory
+.RData
+.Rproj.user
+.idea/
+>>>>>>> NatureDataCube-Shiny/main
