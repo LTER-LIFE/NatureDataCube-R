@@ -87,14 +87,9 @@ The user can open a Shiny interface which lets them select an area (management a
 
 ```markdown
 NatureDataCube-R/
-│
-├─ R/
-│  │
-│  ├─ [naturedatacube_app](https://github.com/LTER-LIFE/NatureDataCube-Shiny/tree/main/R/naturedatacube_app): This folder contains the R code for the Shiny interface. 
-│  │  
-│  └─ [retrieval_functions](https://github.com/LTER-LIFE/NatureDataCube-Shiny/tree/main/R/retrieval_functions): This folder contains the retrieval code for constructing the urls.
-│
-└─ data/
-   │
-   └─ [data](https://github.com/LTER-LIFE/NatureDataCube-Shiny/tree/main/data): This folder contains the data of the available study areas. 
+├─ data/
+└─ R/
+   ├─ naturedatacube_app/
+   └─ retrieval_functions/
+
 ```
