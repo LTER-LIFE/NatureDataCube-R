@@ -14,7 +14,7 @@ get_meteo_for_long_period <- function(meteostation,
     
     message(
       sprintf(
-        "Downloading %s → %s (%d/%d)",
+        "Downloading %s -> %s (%d/%d)",
         ranges$from[i],
         ranges$to[i],
         i,

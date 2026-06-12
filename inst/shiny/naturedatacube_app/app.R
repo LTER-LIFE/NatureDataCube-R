@@ -1,4 +1,3 @@
-
 # app.R
 
 # --------------------
@@ -11,7 +10,7 @@ load_pkgs <- function(pkgs) {
 pkgs <- c(
   "shiny", "leaflet", "leaflet.extras", "sf", "dplyr", "purrr",
   "stringr", "httr", "geojsonsf", "jsonlite", "zip", "here", "terra",
-  "lubridate", "tools", "tibble", "shinyjs", "rstac"
+  "lubridate", "tools", "tibble", "shinyjs", "rstac", "NatureDataCubeR"
 )
 load_pkgs(pkgs)
 
@@ -46,23 +45,6 @@ safe_source <- function(path) {
   tryCatch(source(path), error = function(e) NULL)
 }
 
-safe_source(here::here("R", "retrieval_functions", "ndc_url.R"))
-safe_source(here::here("R", "retrieval_functions", "ndc_get.R"))
-safe_source(here::here("R", "retrieval_functions", "gm_url.R"))
-safe_source(here::here("R", "retrieval_functions", "gm_get.R"))
-safe_source(here::here("R", "retrieval_functions", "weather_functions", "get_closest_meteostation.R"))
-safe_source(here::here("R", "retrieval_functions", "weather_functions", "get_meteo_for_date.R"))
-safe_source(here::here("R", "retrieval_functions", "weather_functions", "get_meteo_for_period.R"))
-safe_source(here::here("R", "retrieval_functions", "weather_functions", "get_meteo_for_long_period.R"))
-safe_source(here::here("R", "retrieval_functions", "weather_functions", "split_date_range.R"))
-safe_source(here::here("R", "retrieval_functions", "stac_raster_helpers.R"))
-safe_source(here::here("R", "retrieval_functions", "landuse_config.R"))
-safe_source(here::here("R", "retrieval_functions", "landuse_functions.R"))
-safe_source(here::here("R", "retrieval_functions", "ndvi", "monthly_ndvi.R"))
-safe_source(here::here("R", "retrieval_functions", "ndvi", "monthly_ndvi_period.R"))
-safe_source(here::here("R", "retrieval_functions", "nitrogen_config.R"))
-safe_source(here::here("R", "retrieval_functions", "nitrogen_functions.R"))
-
 # --------------------
 # Token / headers
 # --------------------
@@ -70,8 +52,8 @@ mytoken <- Sys.getenv("NDC_TOKEN")
 if (!nzchar(mytoken)) stop("NDC_TOKEN environment variable is not set. Add it to your .env file.")
 myheaders <- c("Accept" = "application/json;charset=utf-8", "token" = mytoken)
 
-agro_token <- Sys.getenv("AGRO_DATA_TOKEN")
-if (!nzchar(agro_token)) stop("AGRO_DATA_TOKEN environment variable is not set. Add it to your .env file.")
+agro_token <- Sys.getenv("ADC_TOKEN")
+if (!nzchar(agro_token)) stop("ADC_TOKEN environment variable is not set. Add it to your .env file.")
 
 # --------------------
 # Proxy path (e.g. /naturedatacube for https://lter-life-experience.org/naturedatacube)
@@ -82,7 +64,7 @@ if (nzchar(app_base_url)) options(shiny.appBaseUrl = app_base_url)
 # --------------------
 # Load fixed polygon layers
 # --------------------
-gpkg <- here::here("data", "study_sites.gpkg")
+gpkg <- system.file("extdata/study_sites.gpkg", package = "NatureDataCubeR")
 layers <- tryCatch(sf::st_layers(gpkg)$name, error = function(e) NULL)
 
 all_layers <- NULL
@@ -1771,7 +1753,7 @@ server <- function(input, output, session) {
 
         tryCatch({
           if (ds == "Agricultural fields") {
-            myurl <- ndc_url("Fields", params = c(geometry = mypolygon, epsg = "4326", year = ov$year[i], output_epsg = "4326"))
+            myurl <- adc_url("Fields", params = c(geometry = mypolygon, epsg = "4326", year = ov$year[i], output_epsg = "4326"))
             myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf
@@ -1789,7 +1771,7 @@ server <- function(input, output, session) {
             }
 
           } else if (ds == "AHN") {
-            myurl <- ndc_url("AHN", params = c(geometry = mypolygon, epsg = "4326"))
+            myurl <- adc_url("AHN", params = c(geometry = mypolygon, epsg = "4326"))
             myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf
@@ -1807,7 +1789,7 @@ server <- function(input, output, session) {
             }
 
           } else if (ds == "Soil map") {
-            myurl <- ndc_url("Soiltypes", params = c(geometry = mypolygon, epsg = "4326", output_epsg = "4326", page_size = "25", page_offset = "0"))
+            myurl <- adc_url("Soiltypes", params = c(geometry = mypolygon, epsg = "4326", output_epsg = "4326", page_size = "25", page_offset = "0"))
             myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf

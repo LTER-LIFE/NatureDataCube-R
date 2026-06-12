@@ -17,16 +17,16 @@ get_meteo_for_date <- function(stationid, date, token, page_size = 500, page_off
   # Try two param names because examples used both stationid and meteostation
   params1 <- c(output_epsg = output_epsg, stationid = as.character(stationid), date = date_str,
                page_size = as.character(page_size), page_offset = as.character(page_offset))
-  myurl1 <- ndc_url(option = "Meteo_data", params = params1)
+  myurl1 <- adc_url(option = "Meteo_data", params = params1)
   
-  myres <- tryCatch(ndc_get(url = myurl1, token = token), error = function(e) NULL)
+  myres <- tryCatch(adc_get(url = myurl1, token = token), error = function(e) NULL)
   
   if (is.null(myres) || length(myres$features) == 0) {
     # try alternative param name
     params2 <- c(output_epsg = output_epsg, meteostation = as.character(stationid), date = date_str,
                  page_size = as.character(page_size), page_offset = as.character(page_offset))
-    myurl2 <- ndc_url(option = "Meteo_data", params = params2)
-    myres <- tryCatch(ndc_get(url = myurl2, token = token), error = function(e) NULL)
+    myurl2 <- adc_url(option = "Meteo_data", params = params2)
+    myres <- tryCatch(adc_get(url = myurl2, token = token), error = function(e) NULL)
   }
   
   if (is.null(myres) || length(myres$features) == 0) {

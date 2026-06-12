@@ -1,6 +1,14 @@
 # Nature Data Cube Land Use raster retrieval helpers
 # ---------------------------------------------------
-# Requires stac_raster_helpers.R and landuse_config.R to be sourced first.
+
+landuse_endpoint <- "https://ndc-test.containers.wur.nl/api/"
+landuse_collection <- "ndc-geoserver-rasters"
+landuse_asset_name <- "wcs"
+landuse_keyword <- "lgn"
+landuse_default_year <- 2024L
+landuse_year_choices <- c(2024L)
+landuse_subset_crs <- 32631L
+landuse_min_file_size <- 100000L
 
 landuse_normalize_year <- function(year) {
   if (is.null(year) || length(year) == 0) return(NA_integer_)
@@ -8,7 +16,7 @@ landuse_normalize_year <- function(year) {
   if (is.na(year)) NA_integer_ else year
 }
 
-landuse_collect_metadata <- function(aoi, token = Sys.getenv("NDC_NATURE_TOKEN"),
+landuse_collect_metadata <- function(aoi, token = Sys.getenv("NDC_TOKEN"),
                                      endpoint = landuse_endpoint,
                                      collection = landuse_collection,
                                      limit = 100) {
@@ -45,7 +53,7 @@ landuse_collect_metadata <- function(aoi, token = Sys.getenv("NDC_NATURE_TOKEN")
 
 get_landuse_raster <- function(aoi,
                                year = landuse_default_year,
-                               token = Sys.getenv("NDC_NATURE_TOKEN"),
+                               token = Sys.getenv("NDC_TOKEN"),
                                endpoint = landuse_endpoint,
                                collection = landuse_collection,
                                out_dir = tempdir(),

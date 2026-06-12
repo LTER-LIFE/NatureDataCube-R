@@ -11,13 +11,13 @@ get_closest_meteostation <- function(polygon_wkt,
                                      output_epsg = "4326") {
   stopifnot(is.character(polygon_wkt), nzchar(polygon_wkt))
   # Build stations URL
-  myurl <- ndc_url(option = "Meteo_stations",
+  myurl <- adc_url(option = "Meteo_stations",
                    params = c(output_epsg = output_epsg,
                               page_size = as.character(page_size),
                               page_offset = as.character(page_offset)))
   # Get features
   myres <- tryCatch(
-    ndc_get(url = myurl, token = token),
+    adc_get(url = myurl, token = token),
     error = function(e) stop("Failed to get meteostations: ", e$message)
   )
   

@@ -22,9 +22,9 @@ get_meteo_for_period <- function(meteostation, fromdate, todate, token,
               todate = to_str,
               page_size = as.character(page_size),
               page_offset = as.character(page_offset))
-  myurl <- ndc_url(option = "Meteo_data", params = params)
+  myurl <- adc_url(option = "Meteo_data", params = params)
   
-  myres <- tryCatch(ndc_get(url = myurl, token = token), error = function(e) NULL)
+  myres <- tryCatch(adc_get(url = myurl, token = token), error = function(e) NULL)
   
   if (is.null(myres) || length(myres$features) == 0) {
     warning("No meteo data returned for station ", meteostation, " between ", from_str, " and ", to_str)
