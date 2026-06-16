@@ -14,21 +14,26 @@ ndc_roi <- function(roi = NULL) {
   if (missing(roi) || is.null(roi)) {
     r <- NULL
   } else {
+    
     # Check object type
-    if ("character" %in% class(roi)) {
-      r <- st_read(roi, quiet = TRUE)
-    } else if ("numeric" %in% class(roi)) {
+    if (inherits(roi, "numeric")) {
       r <- st_bbox(roi)
+    } else if (inherits(roi, "character")) {
+      if (file.exists(roi)) {
+        r <- st_read(roi, quiet = TRUE)
+      } else {
+        stop("Path to RoI file not found or the file does not exist.", call. = FALSE)
+      }
     } else {
       r <- roi
     }
   
     # Extract geometry
-    if (any(c("sf", "sfc") %in% class(r))) {
+    if (inherits(r, c("sf", "sfc", "sfg"))) {
       r <- st_geometry(r)
     }
 
-    # Check projection
+    # Reprojection (if needed)
     if (st_crs(r) != st_crs(4326)) {
       r <- st_transform(r, 4326)
     }

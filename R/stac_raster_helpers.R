@@ -30,6 +30,7 @@ stac_normalize_aoi <- function(aoi) {
   }
   sf::st_transform(aoi, 4326)
 }
+# TODO: check if this function can be merged with `ndc_roi`
 
 stac_keywords_to_vec <- function(x) {
   if (is.null(x)) return(character(0))

@@ -1,8 +1,8 @@
 # app.R
 
-# --------------------
-# Packages
-# --------------------
+# --------------
+## Packages ----
+# --------------
 load_pkgs <- function(pkgs) {
   invisible(lapply(pkgs, library, character.only = TRUE))
 }
@@ -14,9 +14,9 @@ pkgs <- c(
 )
 load_pkgs(pkgs)
 
-# --------------------
-# Dataset list & mapping
-# --------------------
+# ----------------------------
+## Dataset list & mapping ----
+# ----------------------------
 available_datasets <- list(
   "Atmosphere" = c("Weather", "Nitrogen"),
   "Biosphere" = c("NDVI", "Vegetation structure"),
@@ -38,16 +38,16 @@ all_dataset_names <- unique(unlist(available_datasets))
 make_tab_id <- function(name) paste0(gsub("[^a-z0-9]+", "_", tolower(name)), "_tab")
 make_target_id <- function(name, tab) paste0("tab_target_", gsub("[^a-z0-9]+", "_", tolower(name)), "_", tolower(tab))
 
-# --------------------
-# Safe source helper
-# --------------------
+# ------------------------
+## Safe source helper ----
+# ------------------------
 safe_source <- function(path) {
   tryCatch(source(path), error = function(e) NULL)
 }
 
-# --------------------
-# Token / headers
-# --------------------
+# ---------------------
+## Token / headers ----
+# ---------------------
 mytoken <- Sys.getenv("NDC_TOKEN")
 if (!nzchar(mytoken)) stop("NDC_TOKEN environment variable is not set. Add it to your .env file.")
 myheaders <- c("Accept" = "application/json;charset=utf-8", "token" = mytoken)
@@ -55,15 +55,16 @@ myheaders <- c("Accept" = "application/json;charset=utf-8", "token" = mytoken)
 agro_token <- Sys.getenv("ADC_TOKEN")
 if (!nzchar(agro_token)) stop("ADC_TOKEN environment variable is not set. Add it to your .env file.")
 
-# --------------------
-# Proxy path (e.g. /naturedatacube for https://lter-life-experience.org/naturedatacube)
-# --------------------
+# -------------------------------------------------------------------------------------------
+## Proxy path (e.g. /naturedatacube for https://lter-life-experience.org/naturedatacube) ----
+# -------------------------------------------------------------------------------------------
 app_base_url <- Sys.getenv("SHINY_APP_BASE_URL")
 if (nzchar(app_base_url)) options(shiny.appBaseUrl = app_base_url)
+# TODO: Should not be needed anymore
 
-# --------------------
-# Load fixed polygon layers
-# --------------------
+# -------------------------------
+## Load fixed polygon layers ----
+# -------------------------------
 gpkg <- system.file("extdata/study_sites.gpkg", package = "NatureDataCubeR")
 layers <- tryCatch(sf::st_layers(gpkg)$name, error = function(e) NULL)
 
@@ -95,9 +96,9 @@ nestboxes_wkt <- if (!is.null(nestboxes)) add_wkt_column(nestboxes) else NULL
 loobos_wkt <- if (!is.null(loobos)) add_wkt_column(loobos) else NULL
 lights_wkt <- if (!is.null(lights)) add_wkt_column(lights) else NULL
 
-# --------------------
-# Helpers
-# --------------------
+# -------------
+## Helpers ----
+# -------------
 assign_sequential_source_names <- function(sf_obj, base_name, overview_df, fixed_df, uploaded_df, drawn_df) {
   if (is.null(sf_obj) || nrow(sf_obj) == 0) return(sf_obj)
 
@@ -327,64 +328,201 @@ same_na <- function(x, y) {
 
 safe_filename <- function(x) gsub("[^A-Za-z0-9_\\-]+", "_", x)
 
-# --------------------
-# UI
-# --------------------
+# --------
+## UI ----
+# --------
 ui <- fluidPage(
   useShinyjs(),
   tags$head(
     tags$style(HTML("
-      body { background-color: #f5f7fb; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
-      .app-header { background: linear-gradient(135deg, #1f5a8a, #2d7da6); color: white; padding: 20px 30px; margin-bottom: 20px; display: flex; align-items: center; gap: 25px; }
-      .app-header img { height: 60px; }
-      .app-title { font-size: 30px; font-weight: 600; }
-      .well { background-color: white; border-radius: 6px; border: none; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
-      .btn-custom { background-color: #1f5a8a !important; color: white !important; border: none !important; border-radius: 5px; padding: 8px 14px; font-weight: 500; transition: all 0.2s ease; }
-      .btn-custom:hover { background-color: #17476c !important; transform: translateY(-1px); }
-      .btn-download { background-color: #1f5a8a !important; color: white !important; border: none !important; }
-      .small-btn { padding: 6px 10px; font-size: 13px; }
-      .radio label { display: block; background: white; border: 1px solid #d8e1ec; padding: 8px 12px; border-radius: 5px; margin-bottom: 6px; cursor: pointer; transition: all 0.2s ease; }
-      .radio label:hover { background: #eef4fb; border-color: #1f5a8a; }
-      .table thead { background-color: #1f5a8a; color: white; }
-      .btn-delete { background-color: #c94c4c; color: white; border: none; border-radius: 4px; padding: 2px 6px; }
-      .btn-delete:hover { background-color: #a83d3d; }
-      h4 { color: #1f5a8a; font-weight: 600; }
-      .ndc-category { margin-bottom: 8px; background: white; border: 1px solid #e6eef6; border-radius: 6px; padding: 6px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
-      .ndc-category summary { font-weight: 600; color: #1f5a8a; list-style: none; cursor: pointer; outline: none; padding: 6px; }
-      .ndc-ds { display: block; padding: 6px 10px; margin: 4px 0; border-radius: 5px; color: #233043; text-decoration: none; }
-      .ndc-ds:hover { background: #eef4fb; border-color: #1f5a8a; }
-      .ndc-ds.selected { background: linear-gradient(90deg, rgba(29,92,140,0.08), rgba(29,92,140,0.04)); border-left: 4px solid #1f5a8a; padding-left: 6px; font-weight: 600; }
-      details[open] > summary::after { content: \" \\25BC\"; float: right; }
-      details > summary::after { content: \" \\25B6\"; float: right; }
-      .fixed-item { display: block; padding: 6px 10px; margin: 4px 0; border-radius: 5px; color: #233043; text-decoration: none; }
-      .fixed-item:hover { background: #eef4fb; border-color: #1f5a8a; }
-      .fixed-item.selected { background: linear-gradient(90deg, rgba(29,92,140,0.08), rgba(29,92,140,0.04)); border-left: 4px solid #1f5a8a; padding-left: 6px; font-weight: 600; }
-      .nav-tabs a.disabled { color: #999 !important; pointer-events: none; cursor: default; opacity: 0.6; }
-      .btn-custom[disabled] { opacity: 0.55 !important; cursor: not-allowed !important; box-shadow: none !important; }
+      body {
+        background-color: #f5f7fb;
+        font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      }
+      .app-header {
+        background: linear-gradient(135deg, #1f5a8a, #2d7da6);
+        color: white;
+        padding: 20px 30px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 25px;
+      }
+      .app-header img {
+        height: 60px;
+      }
+      .app-title {
+        font-size: 30px;
+        font-weight: 600;
+      }
+      .well {
+        background-color: white;
+        border-radius: 6px;
+        border: none;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      }
+      .btn-custom {
+        background-color: #1f5a8a !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 5px;
+        padding: 8px 14px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+      }
+      .btn-custom:hover {
+        background-color: #17476c !important;
+        transform: translateY(-1px);
+      }
+      .btn-download {
+        background-color: #1f5a8a !important;
+        color: white !important;
+        border: none !important;
+      }
+      .small-btn {
+        padding: 6px 10px;
+        font-size: 13px;
+      }
+      .radio label {
+        display: block;
+        background: white;
+        border: 1px solid #d8e1ec;
+        padding: 8px 12px;
+        border-radius: 5px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .radio label:hover {
+        background: #eef4fb;
+        border-color: #1f5a8a;
+      }
+      .table thead {
+        background-color: #1f5a8a;
+        color: white;
+      }
+      .btn-delete {
+        background-color: #c94c4c;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 2px 6px;
+      }
+      .btn-delete:hover {
+        background-color: #a83d3d;
+      }
+      h4 {
+        color: #1f5a8a;
+        font-weight: 600;
+      }
+      .ndc-category {
+        margin-bottom: 8px;
+        background: white;
+        border: 1px solid #e6eef6;
+        border-radius: 6px;
+        padding: 6px 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+      }
+      .ndc-category summary {
+        font-weight: 600;
+        color: #1f5a8a;
+        list-style: none;
+        cursor: pointer;
+        outline: none;
+        padding: 6px;
+      }
+      .ndc-ds {
+        display: block;
+        padding: 6px 10px;
+        margin: 4px 0;
+        border-radius: 5px;
+        color: #233043;
+        text-decoration: none;
+      }
+      .ndc-ds:hover {
+        background: #eef4fb;
+        border-color: #1f5a8a;
+      }
+      .ndc-ds.selected { 
+        background: linear-gradient(90deg, rgba(29,92,140,0.08), rgba(29,92,140,0.04));
+        border-left: 4px solid #1f5a8a;
+        padding-left: 6px;
+        font-weight: 600;
+      }
+      details[open] > summary::after {
+        content: \" \\25BC\";
+        float: right;
+      }
+      details > summary::after {
+        content: \" \\25B6\";
+        float: right;
+      }
+      .fixed-item {
+        display: block;
+        padding: 6px 10px;
+        margin: 4px 0;
+        border-radius: 5px;
+        color: #233043;
+        text-decoration: none;
+      }
+      .fixed-item:hover {
+        background: #eef4fb;
+        border-color: #1f5a8a;
+      }
+      .fixed-item.selected {
+        background: linear-gradient(90deg, rgba(29,92,140,0.08), rgba(29,92,140,0.04));
+        border-left: 4px solid #1f5a8a;
+        padding-left: 6px;
+        font-weight: 600;
+      }
+      .nav-tabs a.disabled {
+        color: #999 !important;
+        pointer-events: none;
+        cursor: default;
+        opacity: 0.6;
+      }
+      .btn-custom[disabled] {
+        opacity: 0.55 !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+      }
       .btn-info-circle {
-          background-color: #FFFFFF !important;
-          color: #2C7BE5 !important;
-          border: 1px solid #2C7BE5;
-          width: 24px;
-          height: 24px;
-          padding: 0 !important;
-          font-size: 1.1rem;
-          font-weight: bold;
-          border-radius: 50% !important;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          line-height: 1;
-          transition: all 0.2s;
-        }
+        background-color: #FFFFFF !important;
+        color: #2C7BE5 !important;
+        border: 1px solid #2C7BE5;
+        width: 24px;
+        height: 24px;
+        padding: 0 !important;
+        font-size: 1.1rem;
+        font-weight: bold;
+        border-radius: 50% !important;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        transition: all 0.2s;
+      }
       .btn-info-circle:hover, .btn-info-circle:focus {
         background-color: #2C7BE5 !important;
         color: #FFFFFF !important;
         border-color: #2C7BE5 !important;
       }
-      .dataset-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-      .dataset-row .ndc-ds { flex:1; margin:0; }
-      .help-button-container { position: fixed; bottom: 20px; left: 20px; z-index: 9999; }
+      .dataset-row {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+      }
+      .dataset-row .ndc-ds {
+        flex:1;
+        margin:0;
+      }
+      .help-button-container {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        z-index: 9999;
+      }
       .btn-help-circle {
         background-color: #FFFFFF !important;
         color: #2C7BE5 !important;
@@ -401,7 +539,10 @@ ui <- fluidPage(
         box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         transition: all 0.2s;
       }
-      .btn-help-circle:hover { background-color: #2C7BE5 !important; color: #FFFFFF !important; }
+      .btn-help-circle:hover {
+        background-color: #2C7BE5 !important;
+        color: #FFFFFF !important;
+      }
       .nav-tabs > li > a {
         color: #233043 !important;
         font-weight: 600;
@@ -423,11 +564,21 @@ ui <- fluidPage(
         pointer-events: none;
         opacity: 0.6;
       }
-      .nav-tabs { margin-bottom: 18px; }
-      .dataset-controls label, .dataset-controls .control-label { color: #1f5a8a; font-weight: 600; }
-      .dataset-controls .form-group { margin-bottom: 16px; }
-      .dataset-controls .radio { margin-bottom: 14px; }
-      .dataset-controls .shiny-date-input, .dataset-controls .shiny-date-range-input { margin-bottom: 16px; }
+      .nav-tabs {
+        margin-bottom: 18px;
+      }
+      .dataset-controls label, .dataset-controls .control-label {
+        color: #1f5a8a; font-weight: 600;
+      }
+      .dataset-controls .form-group {
+        margin-bottom: 16px;
+      }
+      .dataset-controls .radio {
+        margin-bottom: 14px;
+      }
+      .dataset-controls .shiny-date-input, .dataset-controls .shiny-date-range-input {
+        margin-bottom: 16px;
+      }
       .btn-disabled {
         background-color: #e9ecef !important;
         color: #6c757d !important;
@@ -591,9 +742,9 @@ ui <- fluidPage(
   div(class = "help-button-container", actionButton("open_guide", "?", class = "btn-help-circle"))
 )
 
-# --------------------
-# Server
-# --------------------
+# ------------
+## Server ----
+# ------------
 server <- function(input, output, session) {
   shinyjs::disable(selector = "a[data-value='Statistics']")
 
@@ -729,7 +880,7 @@ server <- function(input, output, session) {
     } else {
       selected_polygons(NULL)
     }
-    update_selected_highlights()
+    update_selected_highlights() # TODO: check this function
     invisible(NULL)
   }
 
@@ -2111,9 +2262,9 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 }
 
-# --------------------
-# Zoom helper
-# --------------------
+# -----------------
+## Zoom helper ----
+# -----------------
 zoom_to_sf <- function(sf_obj) {
   if (is.null(sf_obj) || nrow(sf_obj) == 0) return(invisible(NULL))
   bb <- sf::st_bbox(sf::st_transform(sf_obj, 4326))
@@ -2126,7 +2277,7 @@ zoom_to_sf <- function(sf_obj) {
     )
 }
 
-# --------------------
-# Run app
-# --------------------
+# -------------
+## Run app ----
+# -------------
 shinyApp(ui, server)
