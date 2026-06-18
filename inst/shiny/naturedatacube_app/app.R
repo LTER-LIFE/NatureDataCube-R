@@ -634,7 +634,7 @@ ui <- fluidPage(
   tags$div(
     class = "app-header",
     tags$img(src = "LTER-LIFE-logo.png", height = "70px"),
-    tags$div(tags$div(class = "app-title", "Nature Data Cube - Dummy Version"))
+    tags$div(tags$div(class = "app-title", "Nature Data Cube - Demo Version"))
   ),
   sidebarLayout(
     position = "left",
