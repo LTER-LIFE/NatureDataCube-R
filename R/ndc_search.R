@@ -9,8 +9,6 @@
 #' @param trange character. Temporal range.
 #' @param limit integer. Maximum number of STAC Items to return.
 #' @param token character. API token.
-#' @param fetch boolean. If `TRUE`, fetch items.
-#' @param progress boolean. If `TRUE`, show progress bar.
 #' @returns A request response list.
 #' @export
 
@@ -18,7 +16,7 @@ library(rstac)
 library(httr)
 
 ndc_search <- function(collection, roi = NULL, trange = NULL, limit = 100,
-                       token = Sys.getenv("NDC_TOKEN"), fetch = FALSE, progress = FALSE) {
+                       token = Sys.getenv("NDC_TOKEN")) {
   
   headers <- add_headers("Authorization" = paste0("Bearer ", token))
   endpoint <- stac("https://ndc-test.containers.wur.nl/api/")
@@ -37,12 +35,5 @@ ndc_search <- function(collection, roi = NULL, trange = NULL, limit = 100,
   }
 
   ## Submit request
-  query <- post_request(query, headers)
-
-  ## (optional) Fetch items
-  if (fetch) {
-    items_fetch(query, progress = progress)
-  } else {
-    query
-  }
+  post_request(query, headers)
 }

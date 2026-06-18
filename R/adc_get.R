@@ -6,8 +6,8 @@
 #' @param url character. Request URL.
 #' @param option character. Determines the type of request.
 #' @param params vector or list. List of named parameters.
-#' @param token character. API token.
 #' @param server character. Server to connect to, either the main or test _AgroDataCube_ server.
+#' @param token character. API token.
 #' @param download boolean. If `TRUE`, download file.
 #' @param out_path character. Output path.
 #' @param overwrite boolean. If `TRUE`, overwrite file.
@@ -16,8 +16,8 @@
 
 library(httr)
 
-adc_get <- function(url, option, params, token, server = "adc",
-                    download = FALSE, out_path = tempfile(), overwrite = TRUE) {
+adc_get <- function(url = NULL, option, params, server = "adc", download = FALSE,
+                    token = Sys.getenv("ADC_TOKEN"), out_path = tempfile(), overwrite = TRUE) {
 
   # Servers
   server_code <- tolower(server)
@@ -28,7 +28,7 @@ adc_get <- function(url, option, params, token, server = "adc",
   }
 
   # Compose request URL
-  if (missing(url) && !missing(option) && !missing(params)) {
+  if ((is.null(url) || missing(url)) && !missing(option) && !missing(params)) {
     request_url <- adc_url(option = option, params = params, base_url = base_url)
   } else {
     request_url <- url

@@ -8,35 +8,35 @@ The idea of the *NatureDataCube* is to offer an accessible way for researchers/e
 
 ## Main R functions
 
-### Via the *NatureDataCube* STAC API (see [`examples_ndc.ipynb`](%60tests/examples_ndc.ipynb%60) and [`examples_stac.ipynb`](%60tests/examples_stac.ipynb%60))
+### Via the *NatureDataCube* STAC API (see [`examples_ndc.ipynb`]("tests/examples_ndc.ipynb") and [`examples_stac.ipynb`]("tests/examples_stac.ipynb"))
 
-- [`ndc_datasets`](%60R/ndc_datasets.R%60): List all datasets (optionally constrained by query parameters) in NatureDataCube.
-- [`ndc_search`](%60R/ndc_search.R%60): Return results from a custom STAC query (optionally fetching the resulting STAC Items)
-- [`ndc_count`](%60R/ndc_count.R%60): Obtain a number of items available in NatureDataCube datasets (optionally constrained by query parameters).
-- [`ndc_roi`](%60R/ndc_roi.R%60): Import and transform spatial region of interest.
-- [`ndc_trange`](%60R/ndc_trange.R%60): Convert one or more dates to the RCF3339 format.
-- [`assets_download_wcs`](%60R/assets_download_wcs.R%60): Workaround for downloading STAC Assets coming from WCS servers.
+- [`ndc_datasets`]("R/ndc_datasets.R"): List all datasets (optionally constrained by query parameters) in NatureDataCube.
+- [`ndc_search`]("R/ndc_search.R"): Return results from a custom STAC query
+- [`ndc_get`]("R/ndc_get.R"): Fetch or download data through a custom STAC query
+- [`ndc_count`]("R/ndc_count.R"): Obtain a number of items available in NatureDataCube datasets (optionally constrained by query parameters).
+- [`ndc_roi`]("R/ndc_roi.R"): Import and transform spatial region of interest.
+- [`ndc_trange`]("R/ndc_trange.R"): Convert one or more dates to the RCF3339 format.
+- [`assets_download_wcs`]("R/assets_download_wcs.R"): Workaround for downloading STAC Assets coming from WCS servers.
 
-### Via the *AgroDataCube* REST API (see [`examples_adc.ipynb`](%60tests/examples_adc.ipynb%60))
+### Via the *AgroDataCube* REST API (see [`examples_adc.ipynb`]("tests/examples_adc.ipynb"))
 
-- [`adc_url`](%60R/adc_url.R%60): Compose URL text string for submitting data requests through the REST API.
-- [`adc_get`](%60R/adc_get.R%60): Submit requests via REST API.
+- [`adc_url`]("R/adc_url.R"): Compose URL text string for submitting data requests through the REST API.
+- [`adc_get`]("R/adc_get.R"): Submit requests via REST API.
 
-### Via the *GroenMonitor* WCS GeoServer (see [`examples_gm.ipynb`](%60tests/examples_gm.ipynb%60))
+### Via the *GroenMonitor* WCS GeoServer (see [`examples_gm.ipynb`]("tests/examples_gm.ipynb"))
 
-- [`gm_url`](%60R/gm_url.R%60): Compose URL text string for submitting data requests through the *GroenMonitor* WCS GeoServer.
-- [`gm_get`](%60R/gm_get.R%60): Submit requests to the *GroenMonitor* WCS GeoServer.
+- [`gm_url`]("R/gm_url.R"): Compose URL text string for submitting data requests through the *GroenMonitor* WCS GeoServer.
+- [`gm_get`]("R/gm_get.R"): Submit requests to the *GroenMonitor* WCS GeoServer.
 
 ### To be implemented
 
-- [ ] Implement wrapper `ndc_get` for downloading data from the *NatureDataCube* STAC endpoint;
-- [ ] Add (advanced) STAC filtering (e.g. post-fetching filtering, CQL2);
-- [ ] Add a way to easily list available date ranges within items matched with search parameters;
-- [ ] Add function(s) to deal with weather (point) data;
-- [ ] Add functions for post-processing (e.g. cropping acquired gridded data to RoI);
-- [ ] Connect package functionality to the [Shiny App GUI](https://github.com/LTER-LIFE/NatureDataCube-Shiny);
-- [ ] Harmonize functionality across the different data sources, ando also towards using the returned data within Digital Twins platforms (e.g. *NaaVRE*);
-- [ ] Generally improve all functions.
+- Add (advanced) STAC filtering (e.g. post-fetching filtering, CQL2);
+- Add a way to easily list available date ranges within items matched with search parameters;
+- Add function(s) to deal with weather (point) data;
+- Add functions for post-processing (e.g. cropping acquired gridded data to RoI);
+- Connect package functionality to the [Shiny App GUI](https://github.com/LTER-LIFE/NatureDataCube-Shiny);
+- Harmonize functionality across the different data sources, ando also towards using the returned data within Digital Twins platforms (e.g. *NaaVRE*);
+- Generally improve all functions.
 
 ## Shiny app
 
