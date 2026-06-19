@@ -1,6 +1,6 @@
-#' Download data from NatureDataCube
+#' Search and download data from NatureDataCube
 #'
-#' Download data from NatureDataCube, either from a previous or custom STAC query.
+#' Search (and optionally download) data from NatureDataCube, through a custom STAC query.
 #'
 #' @import rstac
 #' @import httr
@@ -21,11 +21,20 @@ ndc_get <- function(collection, roi = NULL, trange = NULL, asset_names = NULL, l
                     token = Sys.getenv("NDC_TOKEN"), mode = "items", crs = 4326,
                     output_dir = tempdir(), overwrite = TRUE, progress = FALSE) {
   
-  ## Search items
-  items <- ndc_search(collection = collection, roi = roi, trange = trange,
-                      limit = limit, token = token)
+  headers <- add_headers("Authorization" = paste0("Bearer ", token))
+  endpoint <- stac("https://ndc-test.containers.wur.nl/api/")
   
-  ## Get items
+  ## Search items
+  query <- stac_search(endpoint, collections = collection, limit = limit)
+  if (!missing(roi) || !is.null(roi)) {
+    query <- stac_search(query, intersects = ndc_roi(roi), limit = limit)
+  }
+  if (!missing(trange)) {
+    query <- stac_search(query, datetime = trange, limit = limit)
+  }
+  items <- post_request(query, headers)
+  
+  ## Return (and optionally download) searched items
   if (mode == "fetch") {
     items_fetch(items, progress = progress, headers)
   } else if (mode == "tibble") {

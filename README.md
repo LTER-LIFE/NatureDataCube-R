@@ -10,9 +10,8 @@ The idea of the *NatureDataCube* is to offer an accessible way for researchers/e
 
 ### Via the *NatureDataCube* STAC API (see [`examples_ndc.ipynb`]("tests/examples_ndc.ipynb") and [`examples_stac.ipynb`]("tests/examples_stac.ipynb"))
 
+- [`ndc_get`]("R/ndc_get.R"): Search (and optionally download) data through a custom STAC query
 - [`ndc_datasets`]("R/ndc_datasets.R"): List all datasets (optionally constrained by query parameters) in NatureDataCube.
-- [`ndc_search`]("R/ndc_search.R"): Return results from a custom STAC query
-- [`ndc_get`]("R/ndc_get.R"): Fetch or download data through a custom STAC query
 - [`ndc_count`]("R/ndc_count.R"): Obtain a number of items available in NatureDataCube datasets (optionally constrained by query parameters).
 - [`ndc_roi`]("R/ndc_roi.R"): Import and transform spatial region of interest.
 - [`ndc_trange`]("R/ndc_trange.R"): Convert one or more dates to the RCF3339 format.
