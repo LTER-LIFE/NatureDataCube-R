@@ -1,4 +1,4 @@
-launch_app <- function(...) {
+ndc_shiny <- function(...) {
   app_dir <- system.file("shiny/naturedatacube_app", package = "NatureDataCubeR")
   if (!nzchar(app_dir)) {
     stop(
