@@ -27,8 +27,8 @@ ndc_count <- function(s = NULL, collection = NULL, roi = NULL, trange = NULL,
   endpoint <- stac("https://ndc-test.containers.wur.nl/api/")
 
   if (missing(s)) {
-    s <- ndc_search(collection = collection, roi = ndc_roi(roi), trange = trange,
-                    limit = limit, token = token, fetch = FALSE, progress = FALSE)
+    s <- ndc_get(collection = collection, roi = ndc_roi(roi), trange = trange,
+                 limit = limit, token = token, mode = "items", progress = FALSE)
   }
 
   items_matched(s)
