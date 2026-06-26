@@ -13,6 +13,20 @@ nitrogen_layer_choices <- c("ntot", "nox", "nh3")
 nitrogen_default_year <- "2024"
 nitrogen_default_layers <- nitrogen_layer_choices
 
+#' Available Nitrogen layer names
+#'
+#' Accessor for the nitrogen layer choices, exported so calling code (e.g. the
+#' Shiny app) can reach this config value without relying on unexported objects.
+#' @return Character vector of nitrogen layer names.
+#' @export
+ndc_nitrogen_layers <- function() nitrogen_layer_choices
+
+#' Available Nitrogen year choices
+#'
+#' @return Character vector of selectable years for the Nitrogen dataset.
+#' @export
+ndc_nitrogen_years <- function() nitrogen_year_choices
+
 nitrogen_clean_layer_name <- function(x) {
   x <- as.character(x)
   x <- trimws(x)
@@ -25,6 +39,10 @@ nitrogen_normalize_year <- function(x) {
   ifelse(nzchar(x), x, NA_character_)
 }
 
+#' Build the Nitrogen dataset control UI (year + layer pickers)
+#'
+#' @return A Shiny tagList of input controls for the Nitrogen dataset.
+#' @export
 nitrogen_controls_ui <- function() {
   shiny::tagList(
     shiny::tags$div(
@@ -173,7 +191,21 @@ nitrogen_clip_raster_to_aoi <- function(r, aoi) {
   r_clip
 }
 
-get_nitrogen_raster <- function(aoi, year, layers, token = Sys.getenv("NDC_NATURE_TOKEN"),
+#' Download Nitrogen raster layers for an area of interest
+#'
+#' @param aoi An sf object (area of interest).
+#' @param year Year to retrieve (e.g. "2024", "2025", "2040").
+#' @param layers Character vector of layer names. Defaults to all available
+#'   nitrogen layers (\code{nitrogen_layer_choices}).
+#' @param token API token (defaults to the NDC_NATURE_TOKEN env var).
+#' @param endpoint,collection STAC endpoint and collection.
+#' @param out_dir Output directory for downloaded rasters.
+#' @param overwrite Overwrite existing files.
+#' @param limit Max STAC items to fetch.
+#' @param file_prefix Optional file prefix.
+#' @return A list with the raster stack and metadata, or NULL.
+#' @export
+get_nitrogen_raster <- function(aoi, year, layers = nitrogen_layer_choices, token = Sys.getenv("NDC_NATURE_TOKEN"),
                                 endpoint = nitrogen_endpoint,
                                 collection = nitrogen_collection,
                                 out_dir = tempdir(),
