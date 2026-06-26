@@ -10,6 +10,20 @@ landuse_year_choices <- c(2024L)
 landuse_subset_crs <- 32631L
 landuse_min_file_size <- 100000L
 
+#' Default Land Use year
+#'
+#' Accessor for the default Land Use year, exported so calling code (e.g. the
+#' Shiny app) can reach this config value without relying on unexported objects.
+#' @return Integer default year for the Land Use dataset.
+#' @export
+ndc_landuse_default_year <- function() landuse_default_year
+
+#' Available Land Use year choices
+#'
+#' @return Integer vector of selectable years for the Land Use dataset.
+#' @export
+ndc_landuse_years <- function() landuse_year_choices
+
 landuse_normalize_year <- function(year) {
   if (is.null(year) || length(year) == 0) return(NA_integer_)
   year <- suppressWarnings(as.integer(as.character(year)[1]))
@@ -51,6 +65,19 @@ landuse_collect_metadata <- function(aoi, token = Sys.getenv("NDC_TOKEN"),
   meta
 }
 
+#' Download Land Use raster for an area of interest
+#'
+#' @param aoi An sf object (area of interest).
+#' @param year Year to retrieve (defaults to \code{landuse_default_year}).
+#' @param token API token (defaults to the NDC_TOKEN env var).
+#' @param endpoint,collection STAC endpoint and collection.
+#' @param out_dir Output directory for the downloaded raster.
+#' @param overwrite Overwrite existing files.
+#' @param limit Max STAC items to fetch.
+#' @param file_prefix Optional file prefix.
+#' @param subset_crs,min_file_size Internal retrieval parameters.
+#' @return A list with the raster and metadata, or NULL.
+#' @export
 get_landuse_raster <- function(aoi,
                                year = landuse_default_year,
                                token = Sys.getenv("NDC_TOKEN"),
