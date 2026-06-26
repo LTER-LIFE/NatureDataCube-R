@@ -38,6 +38,14 @@ all_dataset_names <- unique(unlist(available_datasets))
 make_tab_id <- function(name) paste0(gsub("[^a-z0-9]+", "_", tolower(name)), "_tab")
 make_target_id <- function(name, tab) paste0("tab_target_", gsub("[^a-z0-9]+", "_", tolower(name)), "_", tolower(tab))
 
+# Which tab(s) each dataset exposes. NDVI has both Statistics + Geodata; others one.
+tabs_for_dataset <- function(name) {
+  if (identical(name, "NDVI")) return(c("Statistics", "Geodata"))
+  if (name %in% c("Weather", "AHN")) return("Statistics")
+  "Geodata"
+}
+default_tab_for_dataset <- function(name) tabs_for_dataset(name)[1]
+
 # ------------------------
 ## Safe source helper ----
 # ------------------------
@@ -54,6 +62,10 @@ myheaders <- c("Accept" = "application/json;charset=utf-8", "token" = mytoken)
 
 agro_token <- Sys.getenv("ADC_TOKEN")
 if (!nzchar(agro_token)) stop("ADC_TOKEN environment variable is not set. Add it to your .env file.")
+# Headers for AgroDataCube endpoints (agrodatacube.wur.nl): Soil map, AHN,
+# Agricultural fields. These hit a different host than the NatureDataCube STAC
+# API and therefore need the ADC token, not the NDC token.
+agro_headers <- c("Accept" = "application/json;charset=utf-8", "token" = agro_token)
 
 # -------------------------------------------------------------------------------------------
 ## Proxy path (e.g. /naturedatacube for https://lter-life-experience.org/naturedatacube) ----
@@ -62,28 +74,25 @@ app_base_url <- Sys.getenv("SHINY_APP_BASE_URL")
 if (nzchar(app_base_url)) options(shiny.appBaseUrl = app_base_url)
 # TODO: Should not be needed anymore
 
-# -------------------------------
-## Load fixed polygon layers ----
-# -------------------------------
-gpkg <- system.file("extdata/study_sites.gpkg", package = "NatureDataCubeR")
-layers <- tryCatch(sf::st_layers(gpkg)$name, error = function(e) NULL)
+# ----------------------------------------------
+## Project layers via the NatureDataCube STAC API ----
+# ----------------------------------------------
+# Projects are no longer loaded from a local GeoPackage. Instead:
+#   * LTER  -> fetched live (once) from the "lter" STAC collection, then
+#              classified by `name` into 4 project groups.
+#   * SNL   -> fetched live, on demand, only for the current map viewport
+#              (zoom-gated) because the collection is very large (~264k parcels).
 
-all_layers <- NULL
-if (!is.null(layers)) {
-  all_layers <- set_names(
-    purrr::map(layers, ~ sf::st_read(gpkg, layer = .x, quiet = TRUE)),
-    layers
-  )
-}
+# Collection IDs in the STAC catalogue
+ndc_lter_collection <- "lter"
+ndc_snl_collection  <- "snl"
 
-nutnet <- if (!is.null(all_layers) && "nutnet_poly" %in% names(all_layers)) all_layers[["nutnet_poly"]] else NULL
-nestboxes <- if (!is.null(all_layers)) {
-  nm <- names(all_layers)
-  keep <- nm[stringr::str_detect(nm, "^nestkasten_")]
-  if (length(keep) > 0) purrr::reduce(all_layers[keep], rbind) else NULL
-} else NULL
-loobos <- if (!is.null(all_layers) && "loobos" %in% names(all_layers)) all_layers[["loobos"]] else NULL
-lights <- if (!is.null(all_layers) && "20251008_licht_op_natuur_lantaarnpalen" %in% names(all_layers)) all_layers[["20251008_licht_op_natuur_lantaarnpalen"]] else NULL
+# SNL performance knobs -------------------------------------------------------
+# Below this leaflet zoom level we do NOT fetch/draw SNL parcels (too many).
+# Lower = parcels appear sooner (less zooming needed) but heavier fetches.
+snl_min_zoom    <- 12L
+# Hard cap on parcels fetched per viewport request (testing safeguard).
+snl_fetch_limit <- 1000L
 
 add_wkt_column <- function(sf_obj, col_name = "wkt") {
   sf_obj <- sf::st_transform(sf_obj, 4326)
@@ -91,10 +100,184 @@ add_wkt_column <- function(sf_obj, col_name = "wkt") {
   sf_obj
 }
 
-nutnet_wkt <- if (!is.null(nutnet)) add_wkt_column(nutnet) else NULL
-nestboxes_wkt <- if (!is.null(nestboxes)) add_wkt_column(nestboxes) else NULL
-loobos_wkt <- if (!is.null(loobos)) add_wkt_column(loobos) else NULL
-lights_wkt <- if (!is.null(lights)) add_wkt_column(lights) else NULL
+# Map each LTER project class to the rule that identifies it from `name`.
+# (Used both to classify fetched features and to build the UI menu.)
+lter_class_levels <- c("Light on Nature", "Loobos", "Nestboxes", "Nutnet")
+
+classify_lter <- function(sf_obj) {
+  if (is.null(sf_obj) || nrow(sf_obj) == 0 || !("name" %in% names(sf_obj))) return(sf_obj)
+  nm <- sf_obj[["name"]]
+  sf_obj$project_class <- dplyr::case_when(
+    grepl("^Lantaarnpaal", nm, ignore.case = TRUE) ~ "Light on Nature",
+    grepl("^Loobos$",      nm, ignore.case = TRUE) ~ "Loobos",
+    grepl("Nestkast",      nm, ignore.case = TRUE) ~ "Nestboxes",
+    grepl("^Nutnet$",      nm, ignore.case = TRUE) ~ "Nutnet",
+    TRUE ~ NA_character_
+  )
+  sf_obj
+}
+
+# Fetch the whole LTER collection once and classify it. Returns an sf object
+# (transformed to 4326) or NULL on failure. Cached at session scope below.
+fetch_lter_classified <- function() {
+  out <- tryCatch(
+    NatureDataCubeR::ndc_get(collection = ndc_lter_collection, mode = "sf", limit = 10000),
+    error = function(e) NULL
+  )
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  if (is.na(sf::st_crs(out))) sf::st_crs(out) <- 4326
+  out <- sf::st_transform(out, 4326)
+  classify_lter(out)
+}
+
+# Fetch SNL parcels intersecting a bounding box (xmin, ymin, xmax, ymax in
+# lon/lat). Returns a list(status, data, error) so the caller can tell the
+# difference between "no parcels here" and "the request failed". Always live.
+fetch_snl_bbox <- function(bbox) {
+  if (is.null(bbox) || length(bbox) != 4 || any(!is.finite(bbox))) {
+    return(list(status = "error", data = NULL, error = "Invalid bounding box."))
+  }
+  # Build a proper sf polygon (with an explicit CRS) for the viewport rectangle
+  # and pass THAT as the RoI. ndc_roi() handles sf objects cleanly; passing a
+  # bare numeric vector goes through st_bbox.numeric() which (a) needs names and
+  # (b) yields a bbox with NA crs that then errors on the internal st_transform.
+  roi_poly <- tryCatch(
+    sf::st_as_sf(
+      sf::st_as_sfc(
+        sf::st_bbox(c(xmin = unname(bbox[1]), ymin = unname(bbox[2]),
+                      xmax = unname(bbox[3]), ymax = unname(bbox[4])),
+                    crs = sf::st_crs(4326))
+      )
+    ),
+    error = function(e) NULL
+  )
+  if (is.null(roi_poly)) {
+    return(list(status = "error", data = NULL, error = "Could not build viewport polygon."))
+  }
+  out <- tryCatch(
+    NatureDataCubeR::ndc_get(
+      collection = ndc_snl_collection,
+      roi        = roi_poly,
+      mode       = "sf",
+      limit      = snl_fetch_limit
+    ),
+    error = function(e) structure("ndc_error", message = conditionMessage(e))
+  )
+  if (is.character(out) && identical(as.character(out), "ndc_error")) {
+    return(list(status = "error", data = NULL, error = attr(out, "message")))
+  }
+  if (is.null(out) || nrow(out) == 0) {
+    return(list(status = "empty", data = NULL, error = NULL))
+  }
+  if (is.na(sf::st_crs(out))) sf::st_crs(out) <- 4326
+  out <- sf::st_transform(out, 4326)
+  list(status = "ok", data = out, error = NULL)
+}
+
+# --------------------------------------------------------------------------
+# NDVI statistics via the STAC NDVI collections (ndvi-lter / ndvi-snl)
+# --------------------------------------------------------------------------
+# These collections hold per-polygon NDVI summary stats (vector features),
+# observed irregularly (cloud-cover dependent). We aggregate to MONTHLY values
+# so the Statistics output lines up with the monthly NDVI rasters in Geodata.
+
+# Decide which NDVI collection a selected project area belongs to, based on the
+# sequential source name assigned when the project was loaded. Returns
+# "ndvi-lter", "ndvi-snl", or NA (for non-project polygons: uploads / drawn).
+detect_ndvi_collection <- function(source_name) {
+  if (is.null(source_name) || is.na(source_name) || !nzchar(source_name)) return(NA_character_)
+  # SNL parcels were named "SNL parcel_N"
+  if (grepl("^SNL parcel(_\\d+)?$", source_name)) return("ndvi-snl")
+  # LTER classes were named after the 4 project groups
+  if (grepl(paste0("^(", paste(c("Light on Nature", "Loobos", "Nestboxes", "Nutnet"),
+                                collapse = "|"), ")(_\\d+)?$"), source_name)) return("ndvi-lter")
+  NA_character_
+}
+
+# Fetch NDVI stats for a region of interest from a given collection, restricted
+# to a date range, and aggregate to one row per polygon (ndc_id) per month.
+# Returns list(status, data, error). Only fields actually present in the
+# collection output are used (ndvi_mean, ndvi_std, observation_date, ndc_id);
+# each is guarded so a missing field degrades gracefully instead of erroring.
+fetch_ndvi_stats_monthly <- function(roi_sf, collection, date_from, date_to) {
+  if (is.null(roi_sf)) {
+    return(list(status = "error", data = NULL, error = "No region of interest."))
+  }
+  if (is.null(collection) || is.na(collection)) {
+    return(list(status = "skip", data = NULL,
+                error = "NDVI statistics are only available for LTER and SNL project areas."))
+  }
+
+  roi_sf <- tryCatch({
+    g <- roi_sf
+    if (is.na(sf::st_crs(g))) sf::st_crs(g) <- 4326
+    sf::st_transform(g, 4326)
+  }, error = function(e) NULL)
+  if (is.null(roi_sf)) {
+    return(list(status = "error", data = NULL, error = "Could not prepare region of interest."))
+  }
+
+  # Build a temporal range string for the STAC query (if dates are available).
+  trange <- NULL
+  if (!is.null(date_from) && !is.na(date_from) && !is.null(date_to) && !is.na(date_to)) {
+    trange <- tryCatch(
+      NatureDataCubeR::ndc_trange(c(as.character(date_from), as.character(date_to))),
+      error = function(e) NULL
+    )
+  }
+
+  out <- tryCatch({
+    if (is.null(trange)) {
+      NatureDataCubeR::ndc_get(collection = collection, roi = roi_sf, mode = "sf", limit = 10000)
+    } else {
+      NatureDataCubeR::ndc_get(collection = collection, roi = roi_sf, trange = trange,
+                               mode = "sf", limit = 10000)
+    }
+  }, error = function(e) structure("ndc_error", message = conditionMessage(e)))
+
+  if (is.character(out) && identical(as.character(out), "ndc_error")) {
+    return(list(status = "error", data = NULL, error = attr(out, "message")))
+  }
+  if (is.null(out) || nrow(out) == 0) {
+    return(list(status = "empty", data = NULL, error = NULL))
+  }
+
+  # Drop geometry: statistics output is a plain table.
+  df <- tryCatch(sf::st_drop_geometry(out), error = function(e) as.data.frame(out))
+
+  if (!("observation_date" %in% names(df))) {
+    return(list(status = "error", data = NULL,
+                error = "Expected field 'observation_date' not found in NDVI collection."))
+  }
+  if (!("ndvi_mean" %in% names(df))) {
+    return(list(status = "error", data = NULL,
+                error = "Expected field 'ndvi_mean' not found in NDVI collection."))
+  }
+
+  df$month <- substr(as.character(df$observation_date), 1, 7)  # "YYYY-MM"
+  # Aggregate per sub-polygon (ndc_id) and month if ndc_id is present, so values
+  # are correct even if the area maps to multiple ndc_id features; the ndc_id
+  # column itself is dropped from the final output below.
+  group_cols <- intersect(c("ndc_id", "month"), names(df))
+  if (!("month" %in% group_cols)) group_cols <- "month"
+
+  has_std <- "ndvi_std" %in% names(df)
+
+  agg <- df |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_cols))) |>
+    dplyr::summarise(
+      ndvi_mean = mean(suppressWarnings(as.numeric(ndvi_mean)), na.rm = TRUE),
+      ndvi_std  = if (has_std) mean(suppressWarnings(as.numeric(ndvi_std)), na.rm = TRUE) else NA_real_,
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(month)
+
+  agg <- as.data.frame(agg)
+  if (!has_std) agg$ndvi_std <- NULL          # don't show a column the source didn't provide
+  if ("ndc_id" %in% names(agg)) agg$ndc_id <- NULL  # requested: leave out ndc_id
+
+  list(status = "ok", data = agg, error = NULL)
+}
 
 # -------------
 ## Helpers ----
@@ -120,16 +303,8 @@ assign_sequential_source_names <- function(sf_obj, base_name, overview_df, fixed
   max_idx <- if (length(existing) == 0) 0L else max(vapply(existing, parse_index, integer(1)), na.rm = TRUE)
   start_idx <- if (max_idx >= 1L) max_idx + 1L else 1L
 
-  out_names <- character(nrow(sf_obj))
-  for (i in seq_len(nrow(sf_obj))) {
-    if (start_idx == 1L) {
-      out_names[i] <- base_name
-      start_idx <- 2L
-    } else {
-      out_names[i] <- paste0(base_name, "_", start_idx)
-      start_idx <- start_idx + 1L
-    }
-  }
+  # Always suffix the index, including _1 on the very first polygon.
+  out_names <- paste0(base_name, "_", seq.int(from = start_idx, length.out = nrow(sf_obj)))
 
   sf_obj$source_name <- out_names
   sf_obj
@@ -355,6 +530,30 @@ ui <- fluidPage(
         font-size: 30px;
         font-weight: 600;
       }
+      .header-link {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255,255,255,0.15);
+        color: #ffffff !important;
+        text-decoration: none !important;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 14px;
+        font-weight: 500;
+        border: 1px solid rgba(255,255,255,0.4);
+        transition: background 0.2s ease;
+        white-space: nowrap;
+      }
+      .header-link:hover {
+        background: rgba(255,255,255,0.3);
+      }
+      .header-link svg {
+        height: 14px;
+        width: 14px;
+        flex-shrink: 0;
+      }
       .well {
         background-color: white;
         border-radius: 6px;
@@ -475,6 +674,15 @@ ui <- fluidPage(
         padding-left: 6px;
         font-weight: 600;
       }
+      .ndc-subcategory { margin: 6px 0 6px 10px; padding: 4px 8px; border-left: 2px solid #e6eef6; }
+      .ndc-subcategory > summary { font-weight: 600; color: #2d7da6; list-style: none; cursor: pointer; outline: none; padding: 4px; font-size: 14px; }
+      .ndc-leaf { margin: 6px 0 6px 10px; padding: 4px 8px 4px 12px; border-left: 2px solid #e6eef6; font-weight: 600; color: #2d7da6; font-size: 14px; }
+      .ndc-leaf:hover { background: #eef4fb; }
+      .ndc-leaf.selected { color: #1f5a8a; }
+      .snl-spinner { display: inline-block; width: 11px; height: 11px; margin-right: 7px; vertical-align: -1px;
+        border: 2px solid rgba(31,90,138,0.25); border-top-color: #1f5a8a; border-radius: 50%;
+        animation: snl-spin 0.7s linear infinite; }
+      @keyframes snl-spin { to { transform: rotate(360deg); } }
       .nav-tabs a.disabled {
         color: #999 !important;
         pointer-events: none;
@@ -564,6 +772,15 @@ ui <- fluidPage(
         pointer-events: none;
         opacity: 0.6;
       }
+      .ndc-category.disabled-category {
+        opacity: 0.55;
+        pointer-events: none;
+        cursor: not-allowed;
+      }
+      .ndc-category.disabled-category summary {
+        color: #9aa6b2;
+        cursor: not-allowed;
+      }
       .nav-tabs {
         margin-bottom: 18px;
       }
@@ -588,11 +805,33 @@ ui <- fluidPage(
       }
     ")),
     tags$script(HTML("
+      function ndcSelectProject(el, key) {
+        var was = el.classList.contains('selected');
+        document.querySelectorAll('.fixed-item').forEach(function(e){ e.classList.remove('selected'); });
+        if (!was) {
+          el.classList.add('selected');
+          Shiny.setInputValue('ndc_project', key, {priority: 'event'});
+        } else {
+          Shiny.setInputValue('ndc_project', '', {priority: 'event'});
+        }
+      }
       Shiny.addCustomMessageHandler('ndc_select_fixed', function(value) {
         document.querySelectorAll('.fixed-item').forEach(function(el){ el.classList.remove('selected'); });
-        if (!value) return;
-        var el = document.getElementById('fixed-' + String(value).split(' ').join('_'));
-        if (el) el.classList.add('selected');
+      });
+      Shiny.addCustomMessageHandler('ndc_trigger_download', function(value) {
+        // The Shiny downloadButton renders as an anchor with id download_data.
+        // Click that anchor so the browser follows its download href; a tiny
+        // delay ensures Shiny has set the href before we click.
+        setTimeout(function() {
+          var el = document.getElementById('download_data');
+          if (!el) return;
+          var anchor = (el.tagName === 'A') ? el : el.querySelector('a');
+          if (anchor && anchor.href) {
+            anchor.click();
+          } else if (el.click) {
+            el.click();
+          }
+        }, 150);
       });
       Shiny.addCustomMessageHandler('ndc_force_clear_fixed_sidebar', function() {
         document.querySelectorAll('.fixed-item').forEach(function(el){ el.classList.remove('selected'); });
@@ -634,7 +873,19 @@ ui <- fluidPage(
   tags$div(
     class = "app-header",
     tags$img(src = "LTER-LIFE-logo.png", height = "70px"),
-    tags$div(tags$div(class = "app-title", "Nature Data Cube - Demo Version"))
+    tags$div(tags$div(class = "app-title", "Nature Data Cube — Demo")),
+    tags$a(
+      href = "https://ndc-test.containers.wur.nl", target = "_blank", rel = "noopener noreferrer",
+      class = "header-link",
+      tags$svg(
+        xmlns = "http://www.w3.org/2000/svg", viewBox = "0 0 24 24", fill = "none",
+        stroke = "currentColor", `stroke-width` = "2", `stroke-linecap` = "round", `stroke-linejoin` = "round",
+        tags$path(d = "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"),
+        tags$polyline(points = "15 3 21 3 21 9"),
+        tags$line(x1 = "10", y1 = "14", x2 = "21", y2 = "3")
+      ),
+      "NatureDataCube API"
+    )
   ),
   sidebarLayout(
     position = "left",
@@ -644,16 +895,21 @@ ui <- fluidPage(
       tags$h5("Select a project, upload a polygon, or draw your own polygon", style = "color: #1f5a8a; font-weight: 600; margin-top: 4px; margin-bottom: 8px;"),
       tags$details(class = "ndc-category",
                    tags$summary("Projects"),
-                   tags$a(id = "fixed-NutNet", class = "fixed-item ndc-ds", href = "#",
-                          onclick = HTML("var was = this.classList.contains('selected'); document.querySelectorAll('.fixed-item').forEach(e=>e.classList.remove('selected')); if (!was) { this.classList.add('selected'); Shiny.setInputValue('fixed_layer', 'NutNet', {priority: 'event'}); } else { Shiny.setInputValue('fixed_layer', '', {priority: 'event'}); } return false;"), "NutNet"),
-                   tags$a(id = "fixed-Nestboxes", class = "fixed-item ndc-ds", href = "#",
-                          onclick = HTML("var was = this.classList.contains('selected'); document.querySelectorAll('.fixed-item').forEach(e=>e.classList.remove('selected')); if (!was) { this.classList.add('selected'); Shiny.setInputValue('fixed_layer', 'Nestboxes', {priority: 'event'}); } else { Shiny.setInputValue('fixed_layer', '', {priority: 'event'}); } return false;"), "Nestboxes"),
-                   tags$a(id = "fixed-Loobos", class = "fixed-item ndc-ds", href = "#",
-                          onclick = HTML("var was = this.classList.contains('selected'); document.querySelectorAll('.fixed-item').forEach(e=>e.classList.remove('selected')); if (!was) { this.classList.add('selected'); Shiny.setInputValue('fixed_layer', 'Loobos', {priority: 'event'}); } else { Shiny.setInputValue('fixed_layer', '', {priority: 'event'}); } return false;"), "Loobos"),
-                   tags$a(id = "fixed-Light_on_Nature", class = "fixed-item ndc-ds", href = "#",
-                          onclick = HTML("var was = this.classList.contains('selected'); document.querySelectorAll('.fixed-item').forEach(e=>e.classList.remove('selected')); if (!was) { this.classList.add('selected'); Shiny.setInputValue('fixed_layer', 'Light on Nature', {priority: 'event'}); } else { Shiny.setInputValue('fixed_layer', '', {priority: 'event'}); } return false;"), "Light on Nature")
+                   tags$details(class = "ndc-subcategory",
+                                tags$summary("LTER sites"),
+                                tags$a(id = "proj-lter-Light_on_Nature", class = "fixed-item ndc-ds", href = "#",
+                                       onclick = HTML("ndcSelectProject(this, 'lter:Light on Nature'); return false;"), "Light on Nature"),
+                                tags$a(id = "proj-lter-Loobos", class = "fixed-item ndc-ds", href = "#",
+                                       onclick = HTML("ndcSelectProject(this, 'lter:Loobos'); return false;"), "Loobos"),
+                                tags$a(id = "proj-lter-Nestboxes", class = "fixed-item ndc-ds", href = "#",
+                                       onclick = HTML("ndcSelectProject(this, 'lter:Nestboxes'); return false;"), "Nestboxes"),
+                                tags$a(id = "proj-lter-Nutnet", class = "fixed-item ndc-ds", href = "#",
+                                       onclick = HTML("ndcSelectProject(this, 'lter:Nutnet'); return false;"), "Nutnet")
+                   ),
+                   tags$a(id = "proj-snl", class = "fixed-item ndc-ds ndc-leaf", href = "#",
+                          onclick = HTML("ndcSelectProject(this, 'snl'); return false;"), "SNL sites")
       ),
-      tags$details(class = "ndc-category",
+      tags$details(class = "ndc-category disabled-category",
                    tags$summary("Upload your own polygon(s)"),
                    tags$div(style = "margin-top:8px;",
                             helpText("Supported file formats: .gpkg, .shp. For shapefiles, upload all layers: .shp, .shx, .dbf, and preferably .prj."),
@@ -661,11 +917,12 @@ ui <- fluidPage(
                             uiOutput("upload_panel"),
                             tags$div(style = "margin-top:6px;"))
       ),
-      tags$details(class = "ndc-category",
+      tags$details(class = "ndc-category disabled-category",
                    tags$summary("Draw your own polygon"),
                    tags$div(style = "margin-top:8px;", helpText("Use the draw toolbar on the map below to create polygon(s). Click a polygon to select or deselect it. Use the edit/remove tools on the map toolbar to delete drawn shapes."), tags$div(style = "margin-top:6px;"))
       ),
       leafletOutput("map", height = "400px"),
+      uiOutput("snl_status"),
       br(),
       h4("Choose dataset(s)"),
       tags$div(
@@ -757,6 +1014,20 @@ server <- function(input, output, session) {
   created_observers <- reactiveVal(character(0))
   stats_tabs_present <- reactiveVal(character(0))
 
+  # ---- Project-selection state (replaces the old fixed_layer switch) ----
+  active_project <- reactiveVal(NULL)
+  lter_cache <- reactiveVal(NULL)
+  snl_last_bbox <- reactiveVal(NULL)
+  snl_status_msg <- reactiveVal(NULL)
+
+  get_lter_data <- function() {
+    cached <- lter_cache()
+    if (!is.null(cached)) return(cached)
+    fetched <- fetch_lter_classified()
+    if (!is.null(fetched)) lter_cache(fetched)
+    fetched
+  }
+
   overview <- reactiveVal(
     tibble::tibble(
       dataset = character(),
@@ -782,11 +1053,14 @@ server <- function(input, output, session) {
   )
 
   download_msgs <- reactiveVal(character(0))
+  # Holds a zip the pre-check has built and verified to contain data, so the
+  # download handler can serve it without re-running retrieval.
+  prepared_zip <- reactiveVal(NULL)
 
   dataset_info <- list(
     "Weather" = list(title = "Weather", description = "KNMI weather data for the selected area (daily aggregates).", notes = "Choose a date or a period."),
     "Nitrogen" = list(title = "Nitrogen", description = "Nitrogen deposition layers (ntot, nox, nh3).", notes = "Select a year (2024, 2025, or 2040). Retrieval returns all three raster layers."),
-    "NDVI" = list(title = "NDVI", description = "Monthly average NDVI.", notes = "Supports single-month or range queries and downloads raster layers only."),
+    "NDVI" = list(title = "NDVI", description = "Monthly average NDVI.", notes = "Statistics: monthly NDVI summaries per polygon for LTER/SNL project areas. Geodata: monthly average NDVI raster layers. Supports single-month or range queries."),
     "Vegetation structure" = list(title = "Vegetation structure", description = "Structural vegetation measurements.", notes = "Retrieval not yet wired in this simplified version."),
     "Ground water table" = list(title = "Ground water table", description = "Groundwater depth information.", notes = "Retrieval not yet wired in this version."),
     "Soil map" = list(title = "Soil map", description = "Soil classification and description layers for the selected area (Soiltypes).", notes = ""),
@@ -870,6 +1144,8 @@ server <- function(input, output, session) {
   clear_project_selection_state <- function() {
     session$sendCustomMessage("ndc_select_fixed", NULL)
     session$sendCustomMessage("ndc_force_clear_fixed_sidebar", NULL)
+    active_project(NULL)
+    snl_last_bbox(NULL)
     sel <- selected_polygons()
     if (is.null(sel) || nrow(sel) == 0) {
       selected_polygons(NULL)
@@ -976,9 +1252,9 @@ server <- function(input, output, session) {
     session$sendCustomMessage("ndc_select_dataset", val)
   }, ignoreNULL = FALSE)
 
-  observeEvent(input$fixed_layer, {
-    val <- if (is.null(input$fixed_layer) || identical(input$fixed_layer, "")) NULL else input$fixed_layer
-    session$sendCustomMessage("ndc_select_fixed", val)
+  observeEvent(active_project(), {
+    val <- active_project()
+    session$sendCustomMessage("ndc_select_fixed", if (is.null(val)) NULL else val)
   }, ignoreNULL = FALSE)
 
   output$map <- renderLeaflet({
@@ -991,38 +1267,53 @@ server <- function(input, output, session) {
         rectangleOptions = FALSE,
         markerOptions = FALSE,
         circleMarkerOptions = FALSE,
-        polygonOptions = drawPolygonOptions(showArea = TRUE, repeatMode = FALSE),
-        editOptions = editToolbarOptions(edit = FALSE, remove = TRUE)
+        # Drawing your own polygon on the map is temporarily disabled.
+        # To re-enable, uncomment the line below and remove/comment out polygonOptions = FALSE.
+        # polygonOptions = drawPolygonOptions(showArea = TRUE, repeatMode = FALSE),
+        polygonOptions = FALSE,
+        # Remove/trash-bin button is temporarily disabled.
+        # To re-enable, uncomment the line below and remove/comment out the line after it.
+        # editOptions = editToolbarOptions(edit = FALSE, remove = TRUE)
+        editOptions = editToolbarOptions(edit = FALSE, remove = FALSE)
       )
   })
 
-  observeEvent(input$fixed_layer, {
-    if (is.null(input$fixed_layer) || input$fixed_layer == "") {
-      clear_map_polygons(except = character(0))
-      leaflet::leafletProxy("map") %>%
-        leaflet::clearGroup("fixed") %>%
-        leaflet::clearGroup("highlight_fixed") %>%
-        leaflet::clearPopups()
-      session$sendCustomMessage("ndc_select_fixed", NULL)
-      return(NULL)
+  # Clear the user's selected polygons when the map's "Deselect all" button is
+  # clicked. The loaded project layer (the "fixed" group) is intentionally left
+  # in place; only the selection + its highlight are removed.
+  observeEvent(input$ndc_deselect_all, {
+    selected_polygons(NULL)
+    update_selected_highlights()
+  })
+
+  # Show the "Deselect all" map control only while at least one polygon is
+  # selected; remove it otherwise. Driven reactively by the selection state.
+  observe({
+    sel <- selected_polygons()
+    has_selection <- !is.null(sel) && nrow(sel) > 0
+    proxy <- leaflet::leafletProxy("map")
+    leaflet::removeControl(proxy, layerId = "ndc_deselect_ctrl")
+    if (has_selection) {
+      leaflet::addControl(
+        proxy,
+        position = "topright",
+        layerId = "ndc_deselect_ctrl",
+        html = HTML(paste0(
+          "<button id='ndc_deselect_btn' type='button' title='Deselect all selected polygons' ",
+          "style='background:#fff; border:2px solid rgba(0,0,0,0.2); border-radius:4px; ",
+          "padding:5px 10px; font-size:13px; font-weight:600; color:#1f5a8a; cursor:pointer; ",
+          "box-shadow:0 1px 4px rgba(0,0,0,0.15);' ",
+          "onclick=\"Shiny.setInputValue('ndc_deselect_all', Math.random(), {priority:'event'});\">",
+          "Deselect all</button>"
+        ))
+      )
     }
+  })
 
-    clear_map_polygons(except = c("fixed"))
-    poly <- switch(
-      input$fixed_layer,
-      "NutNet" = nutnet_wkt,
-      "Nestboxes" = nestboxes_wkt,
-      "Loobos" = loobos_wkt,
-      "Light on Nature" = lights_wkt,
-      NULL
-    )
-    if (is.null(poly)) return(NULL)
-
-    poly <- dplyr::mutate(poly, layer_id = as.integer(dplyr::row_number()))
-    poly <- assign_sequential_source_names(poly, base_name = input$fixed_layer, overview(), fixed_polys(), uploaded_polys(), drawn_features())
+  # ---- Helper: render a set of "fixed" project polygons on the map ----
+  render_fixed_polys <- function(poly, fit = FALSE, show_hint = TRUE) {
     fixed_polys(poly)
-
-    leaflet::leafletProxy("map") %>%
+    proxy <- leaflet::leafletProxy("map") %>%
       leaflet::clearGroup("fixed") %>%
       leaflet::clearGroup("highlight_fixed") %>%
       leaflet::clearPopups() %>%
@@ -1037,17 +1328,213 @@ server <- function(input, output, session) {
         labelOptions = leaflet::labelOptions(direction = "auto")
       )
 
-    if (is.null(selected_polygons()) || nrow(selected_polygons()) == 0) {
+    if (fit) {
+      bb <- sf::st_bbox(poly)
+      proxy <- proxy %>% leaflet::fitBounds(
+        as.numeric(bb["xmin"]), as.numeric(bb["ymin"]),
+        as.numeric(bb["xmax"]), as.numeric(bb["ymax"])
+      )
+    }
+
+    if (show_hint && (is.null(selected_polygons()) || nrow(selected_polygons()) == 0)) {
       centroid <- sf::st_centroid(sf::st_geometry(poly[nrow(poly), ]))
       coords <- sf::st_coordinates(centroid)
+      proxy %>% leaflet::addPopups(
+        lng = coords[1], lat = coords[2],
+        popup = "\u26A0 You have selected a project but still need to select a project area.",
+        options = leaflet::popupOptions(closeButton = TRUE)
+      )
+    }
+    invisible(NULL)
+  }
+
+  # ---- Main project selection handler (LTER classes + SNL) ----
+  observeEvent(input$ndc_project, {
+    key <- input$ndc_project
+    active_project(if (is.null(key) || identical(key, "")) NULL else key)
+    snl_last_bbox(NULL)   # reset SNL viewport cache on any project change
+    snl_status_msg(NULL)  # clear any stale SNL status line
+
+    # Deselected: clear everything
+    if (is.null(key) || key == "") {
+      clear_map_polygons(except = character(0))
       leaflet::leafletProxy("map") %>%
-        leaflet::addPopups(
-          lng = coords[1], lat = coords[2],
-          popup = "⚠ You have selected a project but still need to select or draw a project area.",
-          options = leaflet::popupOptions(closeButton = TRUE)
-        )
+        leaflet::clearGroup("fixed") %>%
+        leaflet::clearGroup("highlight_fixed") %>%
+        leaflet::clearPopups()
+      session$sendCustomMessage("ndc_select_fixed", NULL)
+      return(NULL)
+    }
+
+    # Any project switch starts from a fully clean map: clear previous project
+    # polygons (e.g. LTER sites when switching to SNL, or vice versa), their
+    # highlights, selection and popups.
+    clear_map_polygons(except = character(0))
+    fixed_polys(NULL)
+    leaflet::leafletProxy("map") %>%
+      leaflet::clearGroup("fixed") %>%
+      leaflet::clearGroup("highlight_fixed") %>%
+      leaflet::clearPopups()
+
+    # ---- SNL: don't load now; parcels stream in by viewport (see observer below) ----
+    if (identical(key, "snl")) {
+      # Trigger an immediate viewport fetch attempt (it will no-op if zoomed out)
+      snl_update_viewport(force = TRUE)
+      return(NULL)
+    }
+
+    # ---- LTER: pull the chosen class from the cached, classified collection ----
+    if (startsWith(key, "lter:")) {
+      this_class <- sub("^lter:", "", key)
+      lter <- get_lter_data()
+      if (is.null(lter)) {
+        showNotification("Could not load LTER data from the STAC endpoint.", type = "error")
+        return(NULL)
+      }
+      poly <- lter[!is.na(lter$project_class) & lter$project_class == this_class, , drop = FALSE]
+      if (nrow(poly) == 0) {
+        showNotification(paste0("No LTER features found for '", this_class, "'."), type = "warning")
+        return(NULL)
+      }
+      poly <- dplyr::mutate(poly, layer_id = as.integer(dplyr::row_number()))
+      # Unique sequential names per class, e.g. "Light on Nature_1", "Light on Nature_2", ...
+      poly <- assign_sequential_source_names(poly, base_name = this_class,
+                                             overview(), fixed_polys(), uploaded_polys(), drawn_features())
+      # Add the WKT geometry text column used by downstream retrieval (Weather,
+      # Soil map, AHN, Agricultural fields all read the polygon as WKT).
+      poly <- add_wkt_column(poly)
+      render_fixed_polys(poly, fit = TRUE, show_hint = TRUE)
     }
   }, ignoreNULL = FALSE)
+
+  # ---- SNL viewport streaming ----
+  # Fetch only the parcels intersecting the current map view, and only once the
+  # user has zoomed in past snl_min_zoom. Debounced + bbox-deduped to keep the
+  # API load (and render count) low.
+  snl_update_viewport <- function(force = FALSE) {
+    if (!identical(active_project(), "snl")) return(invisible(NULL))
+
+    zoom <- input$map_zoom
+    bounds <- input$map_bounds
+    if (is.null(zoom) || is.null(bounds)) return(invisible(NULL))
+
+    # Too far out: clear parcels and show a hint instead of fetching thousands.
+    if (zoom < snl_min_zoom) {
+      fixed_polys(NULL)
+      snl_last_bbox(NULL)
+      snl_status_msg(list(type = "hint", text = "Zoom in to load SNL parcels."))
+      # No on-map popup here: re-anchoring a popup to the viewport centre on
+      # every pan/zoom made it "travel" and flicker. The status line under the
+      # map conveys the same thing and stays put.
+      leaflet::leafletProxy("map") %>%
+        leaflet::clearGroup("fixed") %>%
+        leaflet::removePopup("snl_zoom_hint")
+      return(invisible(NULL))
+    }
+
+    bbox <- c(bounds$west, bounds$south, bounds$east, bounds$north)
+
+    # Skip if this viewport is essentially the same as the last fetched one.
+    if (!force && !is.null(snl_last_bbox())) {
+      prev <- snl_last_bbox()
+      if (max(abs(bbox - prev)) < 1e-6) return(invisible(NULL))
+    }
+    snl_last_bbox(bbox)
+
+    leaflet::leafletProxy("map") %>% leaflet::removePopup("snl_zoom_hint")
+
+    # The fetch is a blocking network call. withProgress() gives the user a
+    # real progress indicator while it runs (a plain reactiveVal "loading"
+    # message would not render until the observer returns, i.e. too late).
+    res <- withProgress(
+      expr = fetch_snl_bbox(bbox),
+      message = "Loading SNL parcels for this view\u2026",
+      value = 0.5
+    )
+
+    if (identical(res$status, "error")) {
+      fixed_polys(NULL)
+      leaflet::leafletProxy("map") %>% leaflet::clearGroup("fixed")
+      snl_status_msg(list(type = "error",
+                          text = paste0("Could not load SNL parcels: ",
+                                        if (is.null(res$error)) "request failed." else res$error)))
+      return(invisible(NULL))
+    }
+
+    if (identical(res$status, "empty")) {
+      fixed_polys(NULL)
+      leaflet::leafletProxy("map") %>% leaflet::clearGroup("fixed")
+      snl_status_msg(list(type = "empty", text = "No SNL parcels in this area. Try panning or zooming."))
+      return(invisible(NULL))
+    }
+
+    parcels <- res$data
+    n <- nrow(parcels)
+    parcels <- dplyr::mutate(parcels, layer_id = as.integer(dplyr::row_number()))
+    parcels <- assign_sequential_source_names(parcels, base_name = "SNL parcel",
+                                              overview(), fixed_polys(), uploaded_polys(), drawn_features())
+    # Add the WKT geometry text column used by downstream retrieval.
+    parcels <- add_wkt_column(parcels)
+    fixed_polys(parcels)
+
+    leaflet::leafletProxy("map") %>%
+      leaflet::clearGroup("fixed") %>%
+      leaflet::addPolygons(
+        data = parcels,
+        group = "fixed",
+        color = "black",
+        fillOpacity = 0.2,
+        weight = 1,
+        layerId = ~layer_id,
+        label = ~source_name,
+        labelOptions = leaflet::labelOptions(direction = "auto")
+      )
+
+    # If we hit the cap, the view is almost certainly showing only a subset.
+    capped <- n >= snl_fetch_limit
+    snl_status_msg(list(
+      type = if (capped) "capped" else "ok",
+      text = if (capped)
+        paste0("Showing ", n, " SNL parcels (zoom in further to see all parcels in this area).")
+      else
+        paste0("Showing ", n, " SNL parcel", if (n == 1) "" else "s", " in view. Click on a parcel to select it.")
+    ))
+    invisible(NULL)
+  }
+
+  # React to pan/zoom while SNL is active. Debounced so dragging doesn't spam
+  # the API; only the settled viewport triggers a fetch.
+  snl_viewport_trigger <- reactive({
+    list(zoom = input$map_zoom, bounds = input$map_bounds)
+  }) %>% debounce(500)
+
+  observeEvent(snl_viewport_trigger(), {
+    if (identical(active_project(), "snl")) snl_update_viewport(force = FALSE)
+  }, ignoreInit = TRUE)
+
+  # Status line under the map for the SNL parcel layer. Only shown while SNL
+  # is the active project; cleared otherwise.
+  output$snl_status <- renderUI({
+    if (!identical(active_project(), "snl")) return(NULL)
+    msg <- snl_status_msg()
+    if (is.null(msg)) return(NULL)
+    colour <- switch(msg$type,
+                     loading = "#1f5a8a",
+                     ok      = "#2e7d32",
+                     capped  = "#b26a00",
+                     empty   = "#b26a00",
+                     error   = "#c62828",
+                     hint    = "#555555",
+                     "#555555")
+    tags$div(
+      style = paste0("margin-top:6px; padding:6px 10px; border-radius:5px; font-size:13px; ",
+                     "background:#f5f7fb; border-left:4px solid ", colour, "; color:", colour, ";"),
+      if (identical(msg$type, "loading"))
+        tags$span(tags$span(class = "snl-spinner"), msg$text)
+      else
+        msg$text
+    )
+  })
 
   observeEvent(input$map_shape_click, {
     click <- input$map_shape_click
@@ -1508,21 +1995,20 @@ server <- function(input, output, session) {
       tid <- make_tab_id(ds_name)
       header_text <- paste0("Configure data request - ", ds_name)
       header_tag <- tags$h4(header_text, style = "color: #1f5a8a; margin-top: 6px; margin-bottom: 8px;")
-      tab_name <- if (ds_name %in% c("Weather", "AHN")) "Statistics" else "Geodata"
+      tab_names <- tabs_for_dataset(ds_name)
+      tab_panels <- lapply(tab_names, function(tn) {
+        tabPanel(title = tn, value = tn, uiOutput(make_target_id(ds_name, tn)))
+      })
       tagList(
         header_tag,
-        tabsetPanel(
-          id = tid,
-          type = "tabs",
-          tabPanel(title = tab_name, value = tab_name, uiOutput(make_target_id(ds_name, tab_name)))
-        )
+        do.call(tabsetPanel, c(list(id = tid, type = "tabs"), tab_panels))
       )
     }
 
     make_ds_tabset(ds)
   })
 
-  build_controls_for <- function(ds) {
+  build_controls_for <- function(ds, tab = NULL) {
     if (is.null(ds) || ds == "") return(NULL)
 
     if (ds == "Agricultural fields") {
@@ -1543,8 +2029,15 @@ server <- function(input, output, session) {
       )
 
     } else if (ds == "NDVI") {
+      is_stats <- !is.null(tab) && tolower(as.character(tab)) == "statistics"
+      stats_note <- if (is_stats) {
+        helpText("Statistics are monthly NDVI summaries (mean/std) per polygon, available for LTER and SNL project areas only.")
+      } else {
+        helpText("Geodata returns monthly average NDVI raster layers.")
+      }
       tagList(
         tags$div(class = "dataset-controls",
+                 stats_note,
                  radioButtons("ndvi_mode", "NDVI query type:", choices = c("Single month" = "single", "Range of months" = "range"), selected = "single", inline = TRUE),
                  conditionalPanel(condition = "input.ndvi_mode == 'single'",
                                   numericInput("ndvi_year", "Year:", value = 2025, min = 2017, max = as.integer(format(Sys.Date(), "%Y"))),
@@ -1563,18 +2056,20 @@ server <- function(input, output, session) {
   }
 
   for (ds_name in all_dataset_names) {
-    local({
-      dsn <- ds_name
-      tab_name <- if (dsn %in% c("Weather", "AHN")) "Statistics" else "Geodata"
-      tgt <- make_target_id(dsn, tab_name)
-      tab_input_id <- make_tab_id(dsn)
-      output[[tgt]] <- renderUI({
-        if (is.null(input$selected_dataset) || input$selected_dataset != dsn) return(NULL)
-        current_tab <- if (!is.null(input[[tab_input_id]])) input[[tab_input_id]] else tab_name
-        if (is.null(current_tab) || tolower(as.character(current_tab)) != tolower(tab_name)) return(NULL)
-        build_controls_for(dsn)
+    for (tab_nm in tabs_for_dataset(ds_name)) {
+      local({
+        dsn <- ds_name
+        tab_name <- tab_nm
+        tgt <- make_target_id(dsn, tab_name)
+        tab_input_id <- make_tab_id(dsn)
+        output[[tgt]] <- renderUI({
+          if (is.null(input$selected_dataset) || input$selected_dataset != dsn) return(NULL)
+          current_tab <- if (!is.null(input[[tab_input_id]])) input[[tab_input_id]] else default_tab_for_dataset(dsn)
+          if (is.null(current_tab) || tolower(as.character(current_tab)) != tolower(tab_name)) return(NULL)
+          build_controls_for(dsn, tab_name)
+        })
       })
-    })
+    }
   }
 
   observeEvent(input$add_dataset, {
@@ -1598,7 +2093,7 @@ server <- function(input, output, session) {
       year_val <- as.integer(input$nitrogen_year)
 
     } else if (input$selected_dataset == "Land Use") {
-      year_val <- as.integer(landuse_default_year)
+      year_val <- as.integer(ndc_landuse_default_year())
 
     } else if (input$selected_dataset == "NDVI") {
       if (input$ndvi_mode == "single") {
@@ -1622,7 +2117,7 @@ server <- function(input, output, session) {
 
     ds_label <- input$selected_dataset
     tab_input_id <- make_tab_id(ds_label)
-    default_tab <- if (input$selected_dataset %in% c("Weather", "AHN")) "Statistics" else "Geodata"
+    default_tab <- default_tab_for_dataset(input$selected_dataset)
     cur_tab_val <- if (!is.null(isolate(input[[tab_input_id]]))) isolate(input[[tab_input_id]]) else default_tab
     view_label <- if (tolower(as.character(cur_tab_val)) == "statistics") "Statistics" else "Geodata"
 
@@ -1864,7 +2359,6 @@ server <- function(input, output, session) {
         date = date_label,
         file_type = file_type,
         file_path = file_path,
-        abs_path = abs_path,
         status = status,
         note = note,
         reference = reference,
@@ -1897,15 +2391,39 @@ server <- function(input, output, session) {
         is_stats <- tolower(as.character(view_i)) == "statistics"
         sf_ext <- if (is_stats) "csv" else "gpkg"
 
-        outfile_base <- safe_filename(paste0(ds, "_", view_i, "_", i))
+        # Filename base includes the polygon name; all output filenames lowercase.
+        poly_name_safe <- tolower(safe_filename(as.character(polygon_label)))
+        outfile_base <- tolower(safe_filename(paste0(ds, "_", view_i, "_", poly_name_safe)))
         outfile <- NULL
         file_type <- NA_character_
         rel_path <- NA_character_
 
+        # Export the selected polygon geometry as a GeoPackage, one per polygon.
+        if (save_files && !is.null(poly_sf)) {
+          tryCatch({
+            poly_out <- file.path(workdir, paste0(poly_name_safe, ".gpkg"))
+            if (!file.exists(poly_out)) {
+              poly_geom <- sf::st_sf(
+                polygon = as.character(polygon_label),
+                geometry = sf::st_geometry(poly_sf)
+              )
+              if (is.na(sf::st_crs(poly_geom))) sf::st_crs(poly_geom) <- 4326
+              ok_poly <- write_sf_safe(poly_geom, poly_out)
+              # In the download summary, label this row as the reference polygon
+              # (dataset = "Area", view = "Reference polygon") rather than the
+              # dataset/view it was exported alongside.
+              add_manifest_row("Area", "Reference polygon", polygon_label, date_label, "gpkg",
+                               if (ok_poly) basename(poly_out) else NA_character_,
+                               if (ok_poly) poly_out else NA_character_,
+                               if (ok_poly) "ok" else "failed", note = "selected polygon geometry")
+            }
+          }, error = function(e) NULL)
+        }
+
         tryCatch({
           if (ds == "Agricultural fields") {
             myurl <- adc_url("Fields", params = c(geometry = mypolygon, epsg = "4326", year = ov$year[i], output_epsg = "4326"))
-            myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
+            myres <- content(VERB("GET", url = myurl, add_headers(agro_headers)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf
 
@@ -1923,7 +2441,7 @@ server <- function(input, output, session) {
 
           } else if (ds == "AHN") {
             myurl <- adc_url("AHN", params = c(geometry = mypolygon, epsg = "4326"))
-            myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
+            myres <- content(VERB("GET", url = myurl, add_headers(agro_headers)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf
 
@@ -1941,7 +2459,7 @@ server <- function(input, output, session) {
 
           } else if (ds == "Soil map") {
             myurl <- adc_url("Soiltypes", params = c(geometry = mypolygon, epsg = "4326", output_epsg = "4326", page_size = "25", page_offset = "0"))
-            myres <- content(VERB("GET", url = myurl, add_headers(myheaders)))
+            myres <- content(VERB("GET", url = myurl, add_headers(agro_headers)))
             myres_sf <- geojsonsf::geojson_sf(jsonlite::toJSON(myres, auto_unbox = TRUE))
             results[[paste0(ds, "_", i)]] <- myres_sf
 
@@ -1958,7 +2476,7 @@ server <- function(input, output, session) {
             }
 
           } else if (ds == "Weather") {
-            cen_res <- get_closest_meteostation(mypolygon, token = mytoken)
+            cen_res <- get_closest_meteostation(mypolygon, token = agro_token)
             closest_id <- cen_res$closest_id
 
             if (is.null(closest_id)) {
@@ -1979,13 +2497,13 @@ server <- function(input, output, session) {
             }
 
             meteo_sf <- if (df == dt) {
-              get_meteo_for_date(closest_id, df, mytoken)
+              get_meteo_for_date(closest_id, df, agro_token)
             } else {
               get_meteo_for_long_period(
                 meteostation = closest_id,
                 fromdate = df,
                 todate = dt,
-                token = mytoken,
+                token = agro_token,
                 by_days = 200,
                 sleep_sec = 0.5
               )
@@ -2018,8 +2536,8 @@ server <- function(input, output, session) {
             nit_res <- get_nitrogen_raster(
               aoi = poly_sf,
               year = nit_year,
-              layers = nitrogen_layer_choices,
-              token = agro_token,
+              layers = ndc_nitrogen_layers(),
+              token = mytoken,
               out_dir = tempdir(),
               overwrite = TRUE,
               limit = 100,
@@ -2048,7 +2566,44 @@ server <- function(input, output, session) {
             }
 
           } else if (ds == "NDVI") {
-            if (input$ndvi_mode == "single") {
+            if (is_stats) {
+              # ---- NDVI Statistics: monthly-aggregated stats from ndvi-lter / ndvi-snl ----
+              ndvi_collection <- detect_ndvi_collection(polygon_label)
+              date_from_i <- ov$date_from[i]
+              date_to_i   <- ov$date_to[i]
+              stats_res <- fetch_ndvi_stats_monthly(poly_sf, ndvi_collection, date_from_i, date_to_i)
+
+              if (identical(stats_res$status, "skip")) {
+                msg <- if (is.null(stats_res$error)) "NDVI statistics unavailable for this area." else stats_res$error
+                local_msgs <- c(local_msgs, paste0("Skipped: NDVI statistics - ", msg))
+                add_manifest_row(ds, view_i, polygon_label, date_label, "csv", NA_character_, NA_character_, msg)
+              } else if (identical(stats_res$status, "error")) {
+                msg <- if (is.null(stats_res$error)) "request failed" else stats_res$error
+                local_msgs <- c(local_msgs, paste0("Failed: NDVI statistics - ", msg))
+                add_manifest_row(ds, view_i, polygon_label, date_label, "csv", NA_character_, NA_character_, "failed")
+              } else if (identical(stats_res$status, "empty") || is.null(stats_res$data) || nrow(stats_res$data) == 0) {
+                no_data_msg <- "No NDVI statistics available for this area/period"
+                local_msgs <- c(local_msgs, paste0("NDVI statistics: ", no_data_msg))
+                add_manifest_row(ds, view_i, polygon_label, date_label, "csv", NA_character_, NA_character_, no_data_msg)
+              } else {
+                stats_df <- stats_res$data
+                # Tag with the polygon label so multiple areas are distinguishable.
+                stats_df <- cbind(polygon = polygon_label, stats_df)
+                results[[paste0("NDVI_stats_", i)]] <- stats_df
+
+                if (save_files) {
+                  outfile <- file.path(workdir, paste0(outfile_base, ".csv"))
+                  ok <- tryCatch({ utils::write.csv(stats_df, outfile, row.names = FALSE); TRUE },
+                                 error = function(e) FALSE)
+                  add_manifest_row(ds, view_i, polygon_label, date_label, "csv", basename(outfile), outfile, if (ok) "ok" else "failed")
+                  local_msgs <- c(local_msgs, if (ok) paste0("Retrieved: NDVI statistics (", nrow(stats_df), " monthly rows)") else "Failed: NDVI statistics - could not write output")
+                } else {
+                  add_manifest_row(ds, view_i, polygon_label, date_label, "csv", NA_character_, NA_character_, "ok")
+                  local_msgs <- c(local_msgs, paste0("Retrieved: NDVI statistics (", nrow(stats_df), " monthly rows)"))
+                }
+              }
+
+            } else if (input$ndvi_mode == "single") {
               year <- as.integer(input$ndvi_year)
               month <- as.integer(input$ndvi_month)
               r <- download_avg_ndvi_month(poly_sf, year, month)
@@ -2059,7 +2614,7 @@ server <- function(input, output, session) {
                 } else {
                 results[[paste0("NDVI_", i)]] <- r
                 if (save_files) {
-                  outfile <- file.path(workdir, paste0("NDVI_", year, "_", sprintf("%02d", month), ".tif"))
+                  outfile <- file.path(workdir, paste0(outfile_base, ".tif"))
                   ok <- write_sf_safe(r, outfile)
                   add_manifest_row(ds, view_i, polygon_label, date_label, "tif", basename(outfile), outfile, if (ok) "ok" else "failed")
                   local_msgs <- c(local_msgs, if (ok) paste0("Retrieved: NDVI ", year, "-", sprintf("%02d", month)) else paste0("Failed: NDVI ", year, "-", sprintf("%02d", month), " - could not write output"))
@@ -2098,7 +2653,7 @@ server <- function(input, output, session) {
                   results[[paste0("NDVI_", i)]] <- r_stack
 
                   if (save_files) {
-                    outfile <- file.path(workdir, paste0("NDVI_", format(start_date, "%Y%m"), "_to_", format(end_date, "%Y%m"), ".tif"))
+                    outfile <- file.path(workdir, paste0(outfile_base, ".tif"))
                     ok <- write_sf_safe(r_stack, outfile)
                     add_manifest_row(ds, view_i, polygon_label, date_label, "tif", basename(outfile), outfile, if (ok) "ok" else "failed")
                     local_msgs <- c(local_msgs, if (ok) paste0("Retrieved: NDVI stack ", format(start_date, "%Y-%m"), " to ", format(end_date, "%Y-%m")) else paste0("Failed: NDVI - could not write output"))
@@ -2116,12 +2671,12 @@ server <- function(input, output, session) {
 
           } else if (ds == "Land Use") {
             lu_year <- ov$year[i]
-            if (is.na(lu_year)) lu_year <- as.integer(landuse_default_year)
+            if (is.na(lu_year)) lu_year <- as.integer(ndc_landuse_default_year())
 
             lu_res <- get_landuse_raster(
               aoi = poly_sf,
               year = lu_year,
-              token = agro_token,
+              token = mytoken,
               out_dir = tempdir(),
               overwrite = TRUE,
               limit = 100,
@@ -2163,10 +2718,23 @@ server <- function(input, output, session) {
     
     manifest_df <- if (length(manifest_rows) > 0) dplyr::bind_rows(manifest_rows) else tibble::tibble()
 
+    # Did we actually retrieve any data? A row counts if its status is "ok" and
+    # it isn't a polygon-geometry helper file. No file path required, so this
+    # also works in any pre-check that runs retrieval.
+    produced_any <- FALSE
+    if (nrow(manifest_df) > 0 && "status" %in% names(manifest_df)) {
+      is_ok       <- !is.na(manifest_df$status) & manifest_df$status == "ok"
+      not_polygon <- if ("note" %in% names(manifest_df)) {
+        is.na(manifest_df$note) | manifest_df$note != "selected polygon geometry"
+      } else TRUE
+      produced_any <- any(is_ok & not_polygon)
+    }
+
     if (save_files) {
       utils::write.csv(manifest_df, file.path(workdir, "download_summary.csv"), row.names = FALSE)
 
-      if (!is.null(zipfile)) {
+      # Only write a zip when data was actually produced.
+      if (!is.null(zipfile) && produced_any) {
         oldwd <- getwd()
         on.exit(setwd(oldwd), add = TRUE)
         setwd(workdir)
@@ -2174,20 +2742,20 @@ server <- function(input, output, session) {
         files_to_zip <- list.files(".", recursive = TRUE, full.names = FALSE, no.. = TRUE)
         if (length(files_to_zip) > 0) {
           zip::zipr(zipfile, files = files_to_zip)
-          local_msgs <- c(local_msgs, paste0("Zip written to: ", zipfile))
-        } else {
-          local_msgs <- c(local_msgs, "No files were created, so no zip was written.")
         }
       }
     }
 
-    download_msgs(c(download_msgs(), local_msgs))
+    # The no-data notice and message clearing are handled by the download
+    # pre-check observer; retrieve_and_save stays silent and just reports
+    # produced_any back to the caller.
 
     out <- list(
       datasets = results,
       overview = ov,
       messages = download_msgs(),
-      summary = manifest_df
+      summary = manifest_df,
+      produced_any = produced_any
     )
 
     if (save_files) {
@@ -2202,15 +2770,50 @@ server <- function(input, output, session) {
     if (nrow(overview()) == 0) {
       div(style = "color: grey; font-style: italic;", "Download button will appear here once you add a dataset.")
     } else {
-      div(style = "display:flex; gap:10px;",
-          downloadButton("download_data", "Download dataset(s)", class = "btn-custom"),
-          actionButton("return_to_r", "Return data to R (close app)", class = "btn-custom"))
+      div(style = "display:flex; gap:10px; align-items:center;",
+          # Visible button: checks for data first, then triggers the hidden
+          # real download only if there is something to download.
+          actionButton("check_and_download", "Download dataset(s)", class = "btn-custom"),
+          div(style = "position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden;",
+              downloadButton("download_data", "Download dataset(s)", class = "btn-custom")),
+          # "Return data to R" is temporarily disabled (greyed out but visible).
+          actionButton("return_to_r", "Return data to R (close app)", class = "btn-custom",
+                       disabled = "disabled",
+                       style = "opacity:0.5; cursor:not-allowed; pointer-events:none;"))
     }
   })
 
+  # Pre-check before downloading: build the zip once and check whether it has
+  # data. If not, show the no-data notice only (no zip, no download dialog).
+  # If it does, remember the built zip and trigger the hidden download button.
+  observeEvent(input$check_and_download, {
+    tmp_zip <- tempfile(fileext = ".zip")
+    res <- retrieve_and_save(zipfile = tmp_zip, save_files = TRUE)
+    produced <- isTRUE(res$produced_any)
+    if (!produced || !file.exists(tmp_zip)) {
+      prepared_zip(NULL)
+      showNotification(
+        "No data is available within your selection. Please try a different area, time period, or dataset.",
+        type = "warning", duration = 8
+      )
+      download_msgs("No data is available within your selection. Please try a different area, time period, or dataset.")
+    } else {
+      prepared_zip(tmp_zip)
+      session$sendCustomMessage("ndc_trigger_download", TRUE)
+    }
+  })
+
+  # Serves the zip the pre-check already built and verified.
   output$download_data <- downloadHandler(
     filename = function() paste0("naturedatacube_", Sys.Date(), ".zip"),
-    content = function(zipfile) retrieve_and_save(zipfile = zipfile, save_files = TRUE)
+    content = function(file) {
+      zp <- prepared_zip()
+      if (!is.null(zp) && file.exists(zp)) {
+        file.copy(zp, file, overwrite = TRUE)
+      } else {
+        retrieve_and_save(zipfile = file, save_files = TRUE)
+      }
+    }
   )
 
   output$download_messages <- renderUI({
