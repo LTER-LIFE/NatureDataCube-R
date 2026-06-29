@@ -91,7 +91,27 @@ download_avg_ndvi_stack <- function(poly, start_year, start_month, end_year, end
     return(NULL)
   }
   
-  # stack monthly means (should all have same geometry now)
-  r_stack <- rast(raster_list)
+  # ---------------------------------------------------------------------------
+  # FIX (cross-month alignment)
+  # The WCS snaps each month's coverage to its own acquisition grid, so the
+  # monthly means come back on slightly different extents. Combining them with
+  # rast() then fails with "[rast] extents do not match". Align every monthly
+  # mean to one reference grid (the largest, so nothing is cropped) first.
+  # Resampling preserves each layer name (ndvi_mean_YYYYMM), so labels stay
+  # correct even when some months were skipped for lack of data.
+  # ---------------------------------------------------------------------------
+  if (length(raster_list) > 1) {
+    ref_idx <- which.max(vapply(raster_list, terra::ncell, numeric(1)))
+    ref     <- raster_list[[ref_idx]]
+    for (j in seq_along(raster_list)) {
+      if (!terra::compareGeom(ref, raster_list[[j]],
+                              stopOnError = FALSE, messages = FALSE)) {
+        raster_list[[j]] <- terra::resample(raster_list[[j]], ref, method = "bilinear")
+      }
+    }
+  }
+  
+  # stack monthly means (now guaranteed to share geometry)
+  r_stack <- terra::rast(raster_list)
   return(r_stack)
 }
