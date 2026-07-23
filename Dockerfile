@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y \
     libudunits2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install required R packages (leaflet.extras from GitHub — not on CRAN for R 4.5+)
+# Install required R packages (leaflet.extras from GitHub — not on CRAN for R 4.5+).
+# DESCRIPTION has no Imports field, so the package's dependencies are installed
+# explicitly here rather than resolved by R CMD INSTALL.
 RUN R -e "install.packages(c( \
     'shiny', 'leaflet', 'sf', 'dplyr', 'purrr', \
     'stringr', 'httr', 'geojsonsf', 'jsonlite', 'zip', 'here', 'terra', \
@@ -20,14 +22,17 @@ RUN R -e "install.packages(c( \
 ), repos='https://packagemanager.posit.co/cran/__linux__/noble/latest')" && \
     R -e "remotes::install_github('bhaskarvk/leaflet.extras')"
 
-# Copy app code and data — retrieval_functions must land inside the app dir
-# so that here::here() resolves paths correctly at runtime
-COPY R/naturedatacube_app  /srv/shiny-server/naturedatacube_app
-COPY R/retrieval_functions /srv/shiny-server/naturedatacube_app/R/retrieval_functions
-COPY data                  /srv/shiny-server/naturedatacube_app/data
+# Install the NatureDataCubeR package itself. This puts the Shiny app
+# (inst/shiny/naturedatacube_app) and bundled data (inst/extdata) on the
+# package's installed path, so library(NatureDataCubeR) and
+# system.file(...) resolve at runtime.
+COPY . /tmp/NatureDataCubeR
+RUN R CMD INSTALL --no-multiarch --with-keep.source /tmp/NatureDataCubeR \
+    && rm -rf /tmp/NatureDataCubeR
 
 # Expose the port Shiny uses
 EXPOSE 3838
 
-# Command to run the app
-CMD ["R", "-e", "shiny::runApp('/srv/shiny-server/naturedatacube_app', host='0.0.0.0', port=3838)"]
+# Launch the app via the package's own launcher, which locates the app dir
+# with system.file(). SHINY_APP_BASE_URL (from .env) sets the proxy path.
+CMD ["R", "-e", "NatureDataCubeR::ndc_shiny(host='0.0.0.0', port=3838)"]
